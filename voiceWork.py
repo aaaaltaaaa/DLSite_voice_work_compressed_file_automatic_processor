@@ -11,71 +11,83 @@ from mutagen.mp3 import EasyMP3 as MP3
 from mutagen.id3 import APIC
 from mutagen.wave import WAVE
 from mutagen.id3 import ID3FileType, APIC, TIT2, TPE1, TALB,TPE2,TRCK
+import threading
 
+#拖拽时执行的函数
+def draggedFiles(files):
+    global filesname
+    global flag
+    filesname = files
+    flag=True
 
-def draggedFiles(filesname):
+#处理函数
+def process():
+    global flag
+    global filesname
+    while(True):
+        if flag==True:
+            for filename in filesname:
+                try:
+                    global groupChecked
+                    global titleChecked
+                    global cvChecked
+                    global iconChecked
+                    global mp3Checked
+                    global infoText
+                    filename=clear(filename)
+                    id = re.search("RJ\d{6}", filename)
+                    id = filename[id.regs[0][0]:id.regs[0][1]]
+                    if not id:
+                        infoText.insert('end', '未找到RJ编号\n')
+                        infoText.see("end")
+                        infoText.update()
+                        continue
+                    infoText.insert('end','正在处理'+id+'\n')
+                    infoText.see("end")
+                    infoText.update()
+                    info=spider(filename, id)
+                    if not info:
+                        continue
+                    group,title, cv = info
 
-    for filename in filesname:
-        try:
-            global groupChecked
-            global titleChecked
-            global cvChecked
-            global iconChecked
-            global mp3Checked
-            global infoText
-            filename=clear(filename)
-            id = re.search("RJ\d{6}", filename)
-            id = filename[id.regs[0][0]:id.regs[0][1]]
-            if not id:
-                infoText.insert('end', '未找到RJ编号\n')
-                infoText.see("end")
-                infoText.update()
-                continue
-            infoText.insert('end','正在处理'+id+'\n')
-            infoText.see("end")
-            infoText.update()
-            info=spider(filename, id)
-            if not info:
-                continue
-            group,title, cv = info
+                    newname=id
+                    if groupChecked.get()=='1':
+                        newname = newname + ' ' + '[' + group + ']'
+                    if titleChecked.get()== '1':
+                        newname = newname + ' ' + title
+                    if cvChecked.get()=='1' and cv!='':
+                        newname = newname + ' ' +r'(CV '+cv+')'
+                    newname=re.sub('[\\\/:\*\?"<>\|]','',newname)
+                    newname=os.path.join(os.path.dirname(filename),newname)
+                    shutil.move(filename, newname)
+                    infoText.insert('end', "已重命名文件夹为"+os.path.basename(newname)+"\n")
+                    infoText.see("end")
+                    infoText.update()
+                    if iconChecked.get()=='1':
+                        image = img.open(os.path.join(newname,id+'.jpg'))
+                        iconPath=os.path.join(newname, id + '.ico')
+                        x, y = image.size
+                        size = max(x, y)
+                        new_im = img.new('RGBA', (size, size), (255, 255, 255, 0))
+                        new_im.paste(image, ((size - x) // 2, (size - y) // 2))
+                        new_im.save(iconPath)
+                        changeIcon(iconPath)
+                        infoText.insert('end', '已设置文件夹图标\n')
+                        infoText.see("end")
+                        infoText.update()
+                    if mp3Checked.get()=="1":
+                        changeTags(newname,group,title,cv,os.path.join(newname,id+'.jpg'))
+                        infoText.insert('end', "已设置mp3信息\n")
+                        infoText.see("end")
+                        infoText.update()
+                except:
+                    infoText.insert('end', "处理失败，请重试\n")
+                    infoText.see("end")
+                    infoText.update()
+        flag=False
 
-            newname=id
-            if groupChecked.get()=='1':
-                newname = newname + ' ' + '[' + group + ']'
-            if titleChecked.get()== '1':
-                newname = newname + ' ' + title
-            if cvChecked.get()=='1' and cv!='':
-                newname = newname + ' ' +r'(CV '+cv+')'
-            newname=re.sub('[\\\/:\*\?"<>\|]','',newname)
-            newname=os.path.join(os.path.dirname(filename),newname)
-            shutil.move(filename, newname)
-            infoText.insert('end', "已重命名文件夹为"+os.path.basename(newname)+"\n")
-            infoText.see("end")
-            infoText.update()
-            if iconChecked.get()=='1':
-                image = img.open(os.path.join(newname,id+'.jpg'))
-                iconPath=os.path.join(newname, id + '.ico')
-                x, y = image.size
-                size = max(x, y)
-                new_im = img.new('RGBA', (size, size), (255, 255, 255, 0))
-                new_im.paste(image, ((size - x) // 2, (size - y) // 2))
-                new_im.save(iconPath)
-                changeIcon(iconPath)
-                infoText.insert('end', '已设置文件夹图标\n')
-                infoText.see("end")
-                infoText.update()
-            if mp3Checked.get()=="1":
-                changeTags(newname,group,title,cv,os.path.join(newname,id+'.jpg'))
-                infoText.insert('end', "已设置mp3信息\n")
-                infoText.see("end")
-                infoText.update()
-        except:
-            infoText.insert('end', "处理失败，请重试\n")
-            infoText.see("end")
-            infoText.update()
-
-#修改MP3信息
-def changeTags (filename,group,title, cv,picPath) :
+def changeTags (filename,group,title,
+#修改MP3信息cv,picPath) :
     with open(picPath, 'rb') as f:
         picData = f.read()
     for root, dirs, files in os.walk(filename):
@@ -254,5 +266,12 @@ if __name__ == '__main__':
     infoText.pack()
 
 
+
+    global filesname
+    global flag
+    flag=False
+    filesname=''
+    thread=threading.Thread(target=process)
+    thread.start()
     windnd.hook_dropfiles(window, func=draggedFiles, force_unicode='utf-8')
     tk.mainloop()
