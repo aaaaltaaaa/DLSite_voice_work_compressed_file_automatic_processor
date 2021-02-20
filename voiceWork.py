@@ -86,8 +86,8 @@ def process():
                     infoText.update()
         flag=False
 
-def changeTags (filename,group,title,
-#修改MP3信息cv,picPath) :
+#修改MP3信息
+def changeTags (filename,group,title, cv,picPath) :
     with open(picPath, 'rb') as f:
         picData = f.read()
     for root, dirs, files in os.walk(filename):
