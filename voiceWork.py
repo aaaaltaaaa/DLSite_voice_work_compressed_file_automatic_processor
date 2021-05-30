@@ -39,14 +39,20 @@ def process():
                     global iconChecked
                     global mp3Checked
                     global infoText
+                    infoText.insert('end', "开始处理{}\n".format(filename))
+                    infoText.see("end")
+                    infoText.update()
                     filename=Path(filename)
+                    passwd = filename.stem.split()[-1]
+                    pre_clear(filename)
                     if filename.is_file():
-                        infoText.insert('end', "解压{}\n".format(filename))
-                        infoText.see("end")
-                        infoText.update()
-                        passwd = filename.stem.split()[-1]
-                        unzip(filename, passwd,'unziptemp')
-                        filename = filename.parent / Path('unziptemp')
+                        os.rename(filename,filename.with_suffix('.unziptemp'))
+                        unzip(filename.with_suffix('.unziptemp'), passwd)
+                        filename = filename.parent / filename.stem
+                    elif filename.is_dir():
+                        for file in filename.rglob('*'):
+                            if file.is_file():
+                                unzip(file, passwd)
                     if wavToMp3Checked.get() == '1':
                         infoText.insert('end', "转换为MP3\n")
                         infoText.see("end")
@@ -62,7 +68,7 @@ def process():
                         infoText.see("end")
                         infoText.update()
                         continue
-                    infoText.insert('end', '正在处理' + id + '\n')
+                    infoText.insert('end', '编号为' + id + '\n')
                     infoText.see("end")
                     infoText.update()
                     info = spider(filename, id)
@@ -71,6 +77,11 @@ def process():
                     group, title, cv = info
 
                     newname = id
+                    lcr=0
+                    for _ in Path(filename).rglob('*.lrc'):
+                        lcr=1
+                    if lcr==1:
+                        newname = newname + ' '+ '[汉化]'
                     if groupChecked.get() == '1':
                         newname = newname + ' ' + '[' + group + ']'
                     if titleChecked.get() == '1':
@@ -100,11 +111,26 @@ def process():
                         infoText.insert('end', "已设置mp3信息\n")
                         infoText.see("end")
                         infoText.update()
-                except:
+                    infoText.insert('end', "处理完成\n")
+                    infoText.see("end")
+                    infoText.update()
+                except Exception as e:
                     infoText.insert('end', "处理失败，请重试\n")
                     infoText.see("end")
                     infoText.update()
+                    print(e)
         flag = False
+
+
+def pre_clear(filename):
+    for file in filename.rglob('*baiduyun*'):
+        os.remove(file)
+    num_file = 0
+    for _ in filename.rglob('*'):
+        num_file += 1
+    if num_file == 1:
+        for _ in filename.rglob('*'):
+            _.rename(_.with_suffix('.unziptemp'))
 
 
 # 修改MP3信息
@@ -116,11 +142,11 @@ def changeTags(filename, group, title, cv, picPath):
             if os.path.splitext(file)[1] == ".mp3":
                 info = {'picData': picData, 'title': os.path.splitext(file)[0],
                         'artist': cv, 'album': title, 'albumartist': group}
-                SetInfo(os.path.join(root, file), info)
+                setInfo(os.path.join(root, file), info)
 
 
 # 修改MP3的ID3标签
-def SetInfo(path, info):
+def setInfo(path, info):
     songFile = ID3FileType(path)
     try:
         songFile.add_tags()
@@ -197,14 +223,15 @@ def spider(filename, id):
 # 清理空文件夹，并找到RJ号开头的文件夹
 def clear(filename):
     for root, dirs, files in os.walk(filename):
-        id = re.search("RJ\d{6}", root)
         if id != None:
             basename = os.path.basename(root)
-            os.rename(filename, os.path.join(os.path.dirname(filename), basename))
+            os.rename(root, os.path.join(os.path.dirname(filename), 'voiceWorkTemp'))
             try:
                 shutil.rmtree(filename)
             except:
                 pass
+            os.rename(os.path.join(os.path.dirname(filename), 'voiceWorkTemp'),
+                      os.path.join(os.path.dirname(filename), basename))
             filename = os.path.join(os.path.dirname(filename), basename)
             break
 
@@ -266,24 +293,26 @@ def trans_wav_to_mp3(filesname):
                     for file in Path(filesname).rglob('*.mp3'):
                         if file.stem == filename.stem:
                             os.remove(filename)
-
+                            break
 
 # 解压缩
-def unzip(filesname, passwd, unzipdir):
-    if filesname.is_file():
-        if filesname.suffix == '' or filesname.suffix == '.rar' or filesname.suffix == '.zip' or filesname.suffix == '.7z' or filesname.suffix == '.part1':
-            unzipdir = filesname.parent / Path(unzipdir)
-            cmd = 'Bandizip.exe x -aoa -target:auto -p:' + passwd + ' -o:' + '"{}"'.format(unzipdir) + ' ' + '"{}"'.format(filesname)
-            os.system(cmd)
-            if filesname.exists():
-                if filesname.is_file():
-                    os.remove(filesname)
-                else:
-                    shutil.rmtree(filesname)
+def unzip(filesname, passwd):
+    zipSuffix=['','.rar','.zip','.7z','.z7', '.unziptemp']
+    exeSuffix=['.exe','.part1','.iso']
+    if filesname.suffix in zipSuffix:
+        os.rename(filesname, filesname.with_suffix('.unziptemp'))
+        cmd = 'Bandizip.exe x -target:auto -aoa -p:' + passwd + ' "{}"'.format(filesname.with_suffix('.unziptemp')) + ' "{}"'.format(filesname.parent / filesname.stem)
+        os.system(cmd)
+        os.remove(filesname.with_suffix('.unziptemp'))
+        filesname = filesname.parent / filesname.stem
+        for filename in filesname.rglob('*'):
+            if filename.is_file():
+                unzip(filename,passwd)
 
-    newname = unzipdir / filesname.stem
-    for filename in newname.rglob('*'):
-        unzip(filename,passwd, unzipdir)
+    elif (filesname.suffix in exeSuffix) or (len(filesname.suffixes)>=2 and filesname.suffixes[-2] == '.part1'):
+        cmd = 'Bandizip.exe '+ '"{}"'.format(
+            filesname)
+        os.system(cmd)
 
 
 if __name__ == '__main__':
