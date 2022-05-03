@@ -1,14 +1,12 @@
-import collections
 import mimetypes
 import os
 import re
 import stat
+import threading
 import tkinter as tk
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import Levenshtein
 import windnd
 from PIL import Image as img
 from bs4 import BeautifulSoup
@@ -16,88 +14,45 @@ from mutagen.id3 import ID3FileType, APIC, TIT2, TPE1, TALB, TPE2, TRCK
 from pydub import AudioSegment
 from win32com.shell import shell, shellcon
 
+
 # 拖拽时执行的函数
-from transform_lrc import transform_lrc
-from translate import translate
+def draggedFiles(files):
+    global filesname
+    global flag
+    filesname = files
+    flag = True
 
-
-def dragged_files(files):
-    for filename in files:
-        pool.submit(process, filename)
 
 # 处理函数
-def process(filename):
-    try:
-        show(f"开始处理{filename}")
-        filename = Path(filename)
-        # find_no_mp3(filename)
-        filename = unzip(filename)
-        trans_wav_or_flac_to_mp3(filename)
-        filename = clear(filename)
-        RJ = RJ_No(filename)
-        if not RJ:
-            return
-        for filename, id in RJ.items():
-            show(f"开始处理{id}")
-            tags = spider(filename, id)
-            if not tags:
-                return
-            change_tags(filename, tags, filename / (id + '.jpg'))
-            filename = change_name(filename, tags, id)
-            icon(id, filename)
-            mv_lrc(filename)
-            change_lrc(filename)
-            show(f"--处理完成，文件位于{filename}")
-    except Exception as e:
-        show(f"{e}")
-
-def find_no_mp3(filename):
-    suffix = ['.mp3', '.mp4', '.avi']
-    flag = 0
-    for file in filename.rglob('*'):
-        for suf in suffix:
-            if file.suffix == suf:
-                flag = 1
-        if flag == 1:
-            break
-    if flag == 0:
-        with open('no_mp3.txt', 'a+') as f:
-            show(f'{filename}\n')
-            f.write(f'{filename}\n')
-
-
-def mv_lrc(filename):
-    pattern=re.compile('\d+')
-    for file in filename.rglob("*.lrc"):
-        distance=collections.OrderedDict()
-        for f in filename.rglob("*.mp3"):
-            distance[Levenshtein.jaro(str(int(pattern.findall(file.stem)[0])), str(int(pattern.findall(f.stem)[0])))]=f
-        for k,v in distance.items():
-            if v.stem==file.stem:
-                f=v
-                break
-        else:
-            f=sorted(list(distance.items()))[-1][-1]
-        if file != f:
-            if not (f.parent / file.name).exists():
-                if file.exists():
-                    os.rename(file, f.parent / file.name)
-            if not f.with_name(file.name).with_suffix(f.suffix).exists():
-                if f.exists():
-                    os.rename(f, f.with_name(file.name).with_suffix(f.suffix))
-    clear_empty_dir(filename)
-
-
-def clear_empty_dir(filename):
-    for dir in filename.iterdir():
-        try:
-            dir.rmdir()
-        except:
-            pass
+def process():
+    global flag
+    global filesname
+    while (True):
+        if flag == True:
+            for filename in filesname:
+                try:
+                    filename = Path(filename)
+                    trans_wav_or_flac_to_mp3(filename)
+                    mp3=0
+                    mp4=0
+                    for file in filename.rglob("*.mp4"):
+                        mp4=1
+                        break
+                    for file in filename.rglob("*.mp3"):
+                        mp3 = 1
+                        break
+                    if mp3==0 and mp4 ==0:
+                        print(f"{filename}")
+                    else:
+                        show(f"--")
+                except:
+                    pass
+        flag = False
 
 
 def icon(id, newname):
-    if not icon_checked.get():
+    global icon_checked
+    if iconChecked.get() == '0':
         return
     iconPath = get_icon(id, newname)
     change_icon(iconPath)
@@ -115,17 +70,14 @@ def get_icon(id, newname):
     return iconPath
 
 
-def unzip(filename):
+def un_zip(filename):
     passwd = filename.stem.split()[-2:]
-    if Path('passwd.txt').exists():
-        passwd.extend([i.strip() for i in open('passwd.txt', encoding='utf-8')])
-    # passwd=passwd[::-1]
     pre_clear(filename)
     if filename.is_file():
-        filename = file_unzip(filename, passwd)
+        filename = unzip(filename, passwd)
     elif filename.is_dir():
         for file in filename.rglob('*'):
-            file_unzip(file, passwd)
+            unzip(file, passwd)
     return filename
 
 
@@ -149,7 +101,7 @@ def RJ_No(filename):
                 os.rename(file, filename.parent / file.name)
                 RJ[filename.parent / file.name] = id
     if RJ:
-        mv_to_trush(filename)
+        mvToTrush(filename)
     else:
         show(f'--未找到RJ编号，结束，文件位于{filename}。')
     return RJ
@@ -173,51 +125,34 @@ def get_other_name(newname):
 
 
 def show(info):
-
-    info_text.insert('end', info + "\n")
-    info_text.see("end")
-    info_text.update()
-
+    global info_text
+    infoText.insert('end', info + "\n")
+    infoText.see("end")
+    infoText.update()
 
 
 def pre_clear(filename):
     for file in filename.rglob('*baiduyun*'):
-        mv_to_trush(file)
+        mvToTrush(file)
 
 
 def change_name(filename, tags, id):
     group, title, cv = tags
-    t=None
-    for _ in filename.rglob('*.chinese_title'):
-        t=_
-    if t!=None:
-        title=t.stem.__str__()
-        title = title.split(']')
-        title = title[-1]
-    elif '汉化组' in filename.__str__():
-        list=filename.name.__str__().split('-')
-        list.sort(key=lambda x: len(x))
-        title=list[-1]
-        Path.touch((filename / title).with_suffix('.chinese_title'))
-        title=title.split(']')
-        title=title[-1]
-    if translate_checked.get():
-        trans = translate(title)
-        if trans['from'] != 'zh':
-            title = trans['trans_result'][0]['dst']
-
-    newname=id
+    newname = id
     lcr = 0
     for _ in Path(filename).rglob('*.lrc'):
         lcr = 1
         break
     if lcr == 1:
         newname = newname + ' ' + '[汉化]'
-    if group_checked.get():
+    global group_checked
+    global title_checked
+    global cv_checked
+    if groupChecked.get() == '1':
         newname = newname + ' ' + '[' + group + ']'
-    if title_checked.get():
+    if titleChecked.get() == '1':
         newname = newname + ' ' + title
-    if cv_checked.get() and cv != '':
+    if cvChecked.get() == '1' and cv != '':
         newname = newname + ' ' + r'(CV ' + ' '.join(cv.split(';')) + ')'
     newname = re.sub('[\\\/:\*\?"<>\|]', '', newname)
     newname = filename.parent / newname
@@ -241,7 +176,7 @@ def mv_dir(filename, newname):
                 if newname.exists():
                     for f in newname.rglob("*"):
                         if f.name == file.name:
-                            mv_to_trush(file)
+                            mvToTrush(file)
                             continue
                 if file.exists():
                     new = newname / file.relative_to(filename)
@@ -249,12 +184,13 @@ def mv_dir(filename, newname):
                         new.parent.mkdir(parents=True)
                     file.replace(new)
         if filename.exists():
-            mv_to_trush(filename)
+            mvToTrush(filename)
 
 
 # 修改MP3信息
 def change_tags(filename, tags, picPath):
-    if not mp3_checked.get():
+    global mp3_checked
+    if mp3Checked.get() == "0":
         return
     show("--开始设置mp3信息")
     group, title, cv = tags
@@ -263,12 +199,12 @@ def change_tags(filename, tags, picPath):
     for file in filename.rglob("*.mp3"):
         info = {'picData': picData, 'title': file.stem,
                 'artist': cv, 'album': title, 'albumartist': group}
-        set_Info(file, info)
+        setInfo(file, info)
     show("--已设置mp3信息")
 
 
 # 修改MP3的ID3标签
-def set_Info(path, info):
+def setInfo(path, info):
     show(f"--处理{path.stem}")
     songFile = ID3FileType(path)
     try:
@@ -353,7 +289,7 @@ def clear(filename):
         for root, dirs, files in os.walk(filename.__str__()):
             if len(dirs) == 1 and len(files) == 0:
                 os.rename(os.path.join(root, dirs[0]), os.path.join(os.path.dirname(root), dirs[0]) + '.voiceWorkTemp')
-                mv_to_trush(root)
+                mvToTrush(root)
                 if dirs[0] not in Path(root).stem.split('-'):
                     file = root + '-' + dirs[0]
                 else:
@@ -367,7 +303,7 @@ def clear(filename):
             if len(dirs) == 0 and len(files) == 1:
                 os.rename(os.path.join(root, files[0]),
                           os.path.join(os.path.dirname(root), files[0]) + '.voiceWorkTemp')
-                mv_to_trush(root)
+                mvToTrush(root)
                 if files[0].split('.')[0] not in Path(root).stem.split('-'):
                     file = root + '-' + files[0]
                 else:
@@ -379,7 +315,7 @@ def clear(filename):
                 flag = True
                 break
             if len(dirs) == 0 and len(files) == 0:
-                mv_to_trush(root)
+                mvToTrush(root)
                 flag = True
     return filename
 
@@ -409,7 +345,8 @@ def change_icon(icon):
 
 # wav文件转换为mp3
 def trans_wav_or_flac_to_mp3(filesname):
-    if not wav_to_mp3_checked.get():
+    global wav_to_mp3_checked
+    if wavToMp3Checked.get() == '0':
         return
     show('--开始转换mp3')
     mp3, wav, flac = 0, 0, 0
@@ -427,14 +364,14 @@ def trans_wav_or_flac_to_mp3(filesname):
                 if filename.exists() and filename.is_file():
                     for file in Path(filesname).rglob('*.mp3'):
                         if file.stem == filename.stem:
-                            mv_to_trush(filename)
+                            mvToTrush(filename)
                             break
         if flac == 1:
             for filename in Path(filesname).rglob('*.flac'):
                 if filename.exists() and filename.is_file():
                     for file in Path(filesname).rglob('*.mp3'):
                         if file.stem == filename.stem:
-                            mv_to_trush(filename)
+                            mvToTrush(filename)
                             break
 
     if wav == 1:
@@ -442,18 +379,18 @@ def trans_wav_or_flac_to_mp3(filesname):
             show(f'--转换{filename.stem}')
             song = AudioSegment.from_file(filename)
             song.export(filename.with_suffix('.mp3'), format="mp3")
-            mv_to_trush(filename)
+            mvToTrush(filename)
     if flac == 1:
         for filename in Path(filesname).rglob('*.flac'):
             show(f'--转换{filename.stem}')
             song = AudioSegment.from_file(filename)
             song.export(filename.with_suffix('.mp3'), format="mp3")
-            mv_to_trush(filename)
+            mvToTrush(filename)
     show('--mp3转换完成')
 
 
 # 解压缩
-def file_unzip(filename, passwd):
+def unzip(filename, passwd):
     notzip = ['.lrc', '.ass', '.ini', '.url', '.apk', '.heic']
     maybezip = ['.rar', '.zip', '.7z']
     if filename.exists() and filename.is_file():
@@ -462,21 +399,21 @@ def file_unzip(filename, passwd):
             result = 2
             for pd in passwd:
                 output = filename.with_suffix("")
-                cmd = f'bz.exe x -o:"{output}" -aoa -y -p:"{pd}" "{filename}"'
+                cmd = f'Bandizip.exe x -o:"{output}" -aoa -y -p:"{pd}" "{filename}"'
                 result = result and os.system(cmd)
                 if not result:
                     break
                 else:
                     if output.exists():
-                        mv_to_trush(output)
+                        mvToTrush(output)
             if not result:
                 for file in filename.parent.glob("*"):
                     if file.is_file and file.name.split('.')[0:-2] == filename.name.split('.')[0:-2] and len(
                             file.suffixes) >= 2:
-                        mv_to_trush(file)
+                        mvToTrush(file)
                 filename = output
                 for file in filename.rglob('*'):
-                    file_unzip(file, passwd)
+                    unzip(file, passwd)
 
         elif filename.suffix in maybezip or (
                 mimetypes.guess_type(filename) == (None, None) and filename.suffix not in notzip):
@@ -484,23 +421,23 @@ def file_unzip(filename, passwd):
             for pd in passwd:
                 output = filename.with_suffix('') if filename.suffix != '' else filename.with_suffix(".voiceWorkTemp")
                 output.mkdir()
-                cmd = f'bz.exe x -o:"{output}" -aoa -y -p:"{pd}" "{filename}"'
+                cmd = f'Bandizip.exe x -o:"{output}" -aoa -y -p:"{pd}" "{filename}"'
                 result = result and os.system(cmd)
                 if not result:
                     break
                 else:
                     if output.exists():
-                        mv_to_trush(output)
+                        mvToTrush(output)
             if not result:
-                mv_to_trush(filename)
+                mvToTrush(filename)
                 filename = filename.with_suffix('')
                 os.rename(output, filename)
                 for file in filename.rglob('*'):
-                    file_unzip(file, passwd)
+                    unzip(file, passwd)
     return filename
 
 
-def mv_to_trush(filename):
+def mvToTrush(filename):
     try:
         filename = filename.__str__()
         res = shell.SHFileOperation((0, shellcon.FO_DELETE, filename, None,
@@ -512,73 +449,63 @@ def mv_to_trush(filename):
         pass
 
 
-def checkbox_register(text='NULL', value=1):
-    checked = tk.IntVar(value=value)
-    button = tk.Checkbutton(text=text, variable=checked)
-    button.pack()
-    return checked
+if __name__ == '__main__':
+    window = tk.Tk()
+    window.title('音声文件夹整理')
+    window.geometry('400x400')
+    global wav_to_mp3_checked
+    global group_checked
+    global title_checked
+    global cv_checked
+    global icon_checked
+    global mp3_checked
+    global info_text
 
+    wav_to_mp3_checked = tk.StringVar()
+    group_checked = tk.StringVar()
+    title_checked = tk.StringVar()
+    cv_checked = tk.StringVar()
+    icon_checked = tk.StringVar()
+    mp3_checked = tk.StringVar()
 
-def change_lrc(filename):
-    ops = 'add' if 1 else 'delete'
-    file_type = 'srt' if 0 else 'lrc'
-    if filename.is_file():
-        transform_lrc(filename, ops=ops, file_type=file_type)
-    elif filename.is_dir():
-        for file in Path(filename).rglob("*.lrc"):
-            transform_lrc(file, ops=ops, file_type=file_type)
+    wav_to_mp3_checked.set(1)
+    group_checked.set(1)
+    title_checked.set(1)
+    cv_checked.set(1)
+    icon_checked.set(1)
+    mp3_checked.set(1)
 
-
-
-
-def info_register():
+    window.update()
+    lable1 = tk.Label(window, text='将名字带有RJ号的文件夹拖入窗口,可一次拖入多个待处理的文件夹.', font=('宋体', 12), wraplength=window.winfo_width())
+    lable1.pack()
+    lable1 = tk.Label(window, text='该操作会删除所有空文件夹,当A文件夹只包含一个子文件夹B时，会将B中的所有文件放到A内，并删除B。'
+                                   '如果文件名没有RJ号，会找到并处理文件夹中第一个包含的RJ号的子文件夹，并删除其他所有文件，请谨慎使用。', font=('宋体', 12), fg='red',
+                      wraplength=window.winfo_width())
+    lable1.pack()
+    wavToMp3Radio = tk.Checkbutton(text='wav转换为mp3', variable=wav_to_mp3_checked)
+    wavToMp3Radio.pack()
+    groupRadio = tk.Checkbutton(text='文件夹名包含社团', variable=group_checked)
+    groupRadio.pack()
+    nameRadio = tk.Checkbutton(text='文件夹名包含标题', variable=title_checked)
+    nameRadio.pack()
+    cvRadio = tk.Checkbutton(text='文件夹名包含CV', variable=cv_checked)
+    cvRadio.pack()
+    iconRadio = tk.Checkbutton(text='更改文件夹图标', variable=icon_checked)
+    iconRadio.pack()
+    mp3Radio = tk.Checkbutton(text='更改mp3信息', variable=mp3_checked)
+    mp3Radio.pack()
     info_text = tk.Text()
     scroll = tk.Scrollbar()
     scroll.pack(side=tk.RIGHT, fill=tk.Y)
     scroll.config(command=info_text.yview)
     info_text.config(yscrollcommand=scroll.set)
     info_text.pack()
-    return info_text
 
-
-window = tk.Tk()
-
-if __name__ == '__main__':
-    # 窗口信息
-    window.title('音声文件夹整理')
-    window.geometry('400x600')
-    window.update()
-
-    # 提示信息
-    lable = tk.Label(window, text='将名字带有RJ号的文件夹拖入窗口,可一次拖入多个待处理的文件夹.', font=('宋体', 12), wraplength=window.winfo_width())
-    lable.pack()
-    lable = tk.Label(window, text='该操作会删除所有空文件夹,当A文件夹只包含一个子文件夹B时，会将B中的所有文件放到A内，并删除B。'
-                                  '如果文件名没有RJ号，会找到并处理文件夹中第一个包含的RJ号的子文件夹，并删除其他所有文件，请谨慎使用。', font=('宋体', 12), fg='red',
-                     wraplength=window.winfo_width())
-    lable.pack()
-    # 变量
-    global wav_to_mp3_checked
-    wav_to_mp3_checked = checkbox_register('wav转换为mp3')
-    global group_checked
-    group_checked = checkbox_register('文件夹名包含社团')
-    global title_checked
-    title_checked = checkbox_register('文件夹名包含标题')
-    global cv_checked
-    cv_checked = checkbox_register('文件夹名包含CV')
-    global icon_checked
-    icon_checked = checkbox_register('改变文件夹图标')
-    global mp3_checked
-    mp3_checked = checkbox_register('修改MP3信息')
-    global translate_checked
-    translate_checked = checkbox_register('翻译标题')
-    global ops_checked
-    ops_checked = checkbox_register('lrc空行间隔')
-    global type_checked
-    type_checked = checkbox_register('lrc转换为srt',0)
-    global info_text
-    info_text = info_register()
-    # 主逻辑
-    global pool
-    pool = ThreadPoolExecutor(max_workers=2)
-    windnd.hook_dropfiles(window, func=dragged_files, force_unicode='utf-8')
+    global filesname
+    global flag
+    flag = False
+    filesname = ''
+    thread = threading.Thread(target=process, daemon=True)
+    thread.start()
+    windnd.hook_dropfiles(window, func=draggedFiles, force_unicode='utf-8')
     tk.mainloop()
