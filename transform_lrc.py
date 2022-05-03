@@ -1,10 +1,12 @@
 import os
+import shutil
 import threading
 import tkinter as tk
 from copy import deepcopy
 from pathlib import Path
 from typing import Optional
 
+import chardet
 import pylrc
 import windnd
 from win32com.shell import shell, shellcon
@@ -15,9 +17,18 @@ def transform_lrc(input: Path, output: Optional[Path] = None, ops: str = 'add', 
     # show(f"--处理lrc:{input}")
     if 'original_lrc' in input.parts:
         return
+    if deleted:
+        mv_to_trush(input)
+    else:
+        if not (input.parent / 'original_lrc').exists():
+            Path.mkdir(input.parent / 'original_lrc')
+        if not (input.parent / 'original_lrc' / input.name).exists():
+            shutil.copy(input, input.parent / 'original_lrc' / input.name)
     if output is None:
         output = input
-    lrc_file = open(input, encoding='utf-8')
+    with open(input, 'rb') as f:
+        result = chardet.detect(f.read())
+    lrc_file = open(input,encoding=result['encoding'])
     lrc_string = ''.join(lrc_file.readlines())
     lrc_file.close()
     subs_output = pylrc.parse('')
@@ -45,14 +56,8 @@ def transform_lrc(input: Path, output: Optional[Path] = None, ops: str = 'add', 
         output = output.with_suffix('.srt')
     elif file_type == 'lrc':
         lrc_string = subs_output.toLRC()
-    if deleted:
-        mv_to_trush(input)
-    else:
-        if not (input.parent / 'original_lrc').exists():
-            Path.mkdir(input.parent / 'original_lrc')
-        if not (input.parent / 'original_lrc' / input.name).exists():
-            Path.rename(input, input.parent / 'original_lrc' / input.name)
-    lrc_file = open(output, 'w', encoding='utf-8')
+
+    lrc_file = open(output, 'w',encoding='utf-8')
     lrc_file.write(lrc_string)
     lrc_file.close()
 
