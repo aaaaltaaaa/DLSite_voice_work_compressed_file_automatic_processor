@@ -41,5 +41,6 @@ def set_appid_and_key():
         lines=f.readlines()
     return lines[0].strip(),lines[1].strip()
 
+if __name__ == '__main__':
 
-translate()
+    print(translate('english'))

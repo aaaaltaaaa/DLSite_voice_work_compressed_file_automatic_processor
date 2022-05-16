@@ -14,23 +14,38 @@ from win32com.shell import shell, shellcon
 
 def transform_lrc(input: Path, output: Optional[Path] = None, ops: str = 'add', file_type: str = 'lrc',
                   deleted: bool = False) -> None:
-    # show(f"--处理lrc:{input}")
     if 'original_lrc' in input.parts:
         return
+    show(f"--处理lrc:{input}")
+    if not (input.parent / 'original_lrc').exists():
+        Path.mkdir(input.parent / 'original_lrc')
+    if not (input.parent / 'original_lrc' / input.name).exists():
+        shutil.copy(input, input.parent / 'original_lrc' / input.name)
     if deleted:
-        mv_to_trush(input)
-    else:
-        if not (input.parent / 'original_lrc').exists():
-            Path.mkdir(input.parent / 'original_lrc')
-        if not (input.parent / 'original_lrc' / input.name).exists():
-            shutil.copy(input, input.parent / 'original_lrc' / input.name)
+        mv_to_trush(input.parent / 'original_lrc')
     if output is None:
         output = input
     with open(input, 'rb') as f:
         result = chardet.detect(f.read())
-    lrc_file = open(input,encoding=result['encoding'])
-    lrc_string = ''.join(lrc_file.readlines())
-    lrc_file.close()
+    if 'SIG' in result['encoding']:
+        with open(input,'rb') as f:
+            lrc_string=f.read()[3:]
+        with open(input, 'wb') as f:
+             f.write(lrc_string)
+        with open(input, 'rb') as f:
+            result = chardet.detect(f.read())
+    encodings=[result['encoding'],'gbk','utf-8']
+    with open(input,'rb') as f:
+        lrc_file =f.read()
+    for encoding in encodings:
+        try:
+            lrc_string = lrc_file.decode(encoding)
+        except:
+            pass
+        else:
+            break
+    else:
+        raise Exception("未知编码")
     subs_output = pylrc.parse('')
     subs_input = pylrc.parse(lrc_string)
     first_line = 0
@@ -57,9 +72,8 @@ def transform_lrc(input: Path, output: Optional[Path] = None, ops: str = 'add', 
     elif file_type == 'lrc':
         lrc_string = subs_output.toLRC()
 
-    lrc_file = open(output, 'w',encoding='utf-8')
-    lrc_file.write(lrc_string)
-    lrc_file.close()
+    with open(output, 'w',encoding='utf-8') as lrc_file:
+        lrc_file.write(lrc_string)
 
 
 def dragged_files(files):
@@ -92,10 +106,13 @@ def process():
 
 
 def show(info):
-    global info_text
-    info_text.insert('end', info + "\n")
-    info_text.see("end")
-    info_text.update()
+    try:
+        global info_text
+        info_text.insert('end', info + "\n")
+        info_text.see("end")
+        info_text.update()
+    except:
+        pass
 
 
 def mv_to_trush(filename):

@@ -43,10 +43,10 @@ def process(filename):
             if not tags:
                 return
             change_tags(filename, tags, filename / (id + '.jpg'))
-            filename = change_name(filename, tags, id)
-            icon(id, filename)
             mv_lrc(filename)
             change_lrc(filename)
+            filename = change_name(filename, tags, id)
+            icon(id, filename)
             show(f"--处理完成，文件位于{filename}")
     except Exception as e:
         show(f"{e}")
@@ -62,29 +62,47 @@ def find_no_mp3(filename):
             break
     if flag == 0:
         with open('no_mp3.txt', 'a+') as f:
-            show(f'{filename}\n')
+            show(f'{filename}缺少音声\n')
             f.write(f'{filename}\n')
-
 
 def mv_lrc(filename):
     pattern=re.compile('\d+')
-    for file in filename.rglob("*.lrc"):
-        distance=collections.OrderedDict()
-        for f in filename.rglob("*.mp3"):
-            distance[Levenshtein.jaro(str(int(pattern.findall(file.stem)[0])), str(int(pattern.findall(f.stem)[0])))]=f
+    for lrc_file in filename.rglob("*.lrc"):
+        distance = collections.OrderedDict()
+        for mp3_file in lrc_file.parent.glob('*.mp3'):
+            try:
+                distance[Levenshtein.jaro(str(int(pattern.findall(lrc_file.stem)[0])),
+                                          str(int(pattern.findall(mp3_file.stem)[0])))] = mp3_file
+            except:
+                distance[Levenshtein.jaro(lrc_file.stem, mp3_file.stem)] = mp3_file
+        if len(distance)==0:
+            for mp3_file in filename.rglob("*.mp3"):
+                try:
+                    distance[Levenshtein.jaro(str(int(pattern.findall(lrc_file.stem)[0])), str(int(pattern.findall(mp3_file.stem)[0])))]=mp3_file
+                except:
+                    distance[Levenshtein.jaro(lrc_file.stem, mp3_file.stem)]=mp3_file
+        if len(distance)==0:
+            show(f"--{filename.name}:{lrc_file}没有对应的MP3")
+            continue
+        mp3_file_list=[]
         for k,v in distance.items():
-            if v.stem==file.stem:
-                f=v
+            if v.stem==lrc_file.stem:
+                mp3_file_list.append(v)
                 break
         else:
-            f=sorted(list(distance.items()))[-1][-1]
-        if file != f:
-            if not (f.parent / file.name).exists():
-                if file.exists():
-                    os.rename(file, f.parent / file.name)
-            if not f.with_name(file.name).with_suffix(f.suffix).exists():
-                if f.exists():
-                    os.rename(f, f.with_name(file.name).with_suffix(f.suffix))
+            score=sorted(list(distance.items()))[-1][0]
+            for k, v in distance.items():
+                if k == score:
+                    mp3_file_list.append(v)
+                    break
+        for mp3_file in mp3_file_list:
+            if lrc_file.stem != mp3_file.stem:
+                if not (mp3_file.parent / lrc_file.name).exists():
+                    if lrc_file.exists():
+                        lrc_file.replace(mp3_file.parent / lrc_file.name)
+                if not mp3_file.with_name(lrc_file.name).with_suffix(mp3_file.suffix).exists():
+                    if mp3_file.exists():
+                        mp3_file.replace(mp3_file.with_name(lrc_file.name).with_suffix(mp3_file.suffix))
     clear_empty_dir(filename)
 
 
@@ -118,7 +136,8 @@ def get_icon(id, newname):
 def unzip(filename):
     passwd = filename.stem.split()[-2:]
     if Path('passwd.txt').exists():
-        passwd.extend([i.strip() for i in open('passwd.txt', encoding='utf-8')])
+        with open('passwd.txt', encoding='utf-8') as f:
+            passwd.extend([i.strip() for i in f.readlines()])
     # passwd=passwd[::-1]
     pre_clear(filename)
     if filename.is_file():
@@ -146,7 +165,7 @@ def RJ_No(filename):
             if file.exists() and id:
                 id = (file.__str__())[id.regs[0][0]:id.regs[0][1]]
                 show(f'--找到{id}')
-                os.rename(file, filename.parent / file.name)
+                file.replace(filename.parent / file.name)
                 RJ[filename.parent / file.name] = id
     if RJ:
         mv_to_trush(filename)
@@ -169,15 +188,21 @@ def get_other_name(newname):
             if i > 0:
                 othername += ' '
             othername += n
+    if not othername.exists():
+        raletive= '*'+newname.name.__str__().split(' ')[0] + '*'
+        for file in newname.parent.glob(raletive):
+            if (file/'desktop.ini').exists():
+                othername=file
     return Path(othername), chinese
 
 
 def show(info):
-
-    info_text.insert('end', info + "\n")
-    info_text.see("end")
-    info_text.update()
-
+    try:
+        info_text.insert('end', info + "\n")
+        info_text.see("end")
+        info_text.update()
+    except:
+        pass
 
 
 def pre_clear(filename):
@@ -237,17 +262,15 @@ def mv_dir(filename, newname):
         return
     if newname != filename:
         for file in filename.rglob("*"):
-            if file.is_file():
-                if newname.exists():
-                    for f in newname.rglob("*"):
-                        if f.name == file.name:
-                            mv_to_trush(file)
-                            continue
-                if file.exists():
-                    new = newname / file.relative_to(filename)
-                    if not new.parent.exists():
-                        new.parent.mkdir(parents=True)
+            if file.is_file() and file.exists:
+                new = newname / file.relative_to(filename)
+                if not new.parent.exists():
+                    new.parent.mkdir(parents=True)
+                try:
+                    new.parent.touch()
                     file.replace(new)
+                except:
+                    pass
         if filename.exists():
             mv_to_trush(filename)
 
@@ -304,6 +327,7 @@ def set_Info(path, info):
         text=''
     )
     songFile.save()
+    del songFile
 
 
 # 爬取信息与图片
@@ -332,12 +356,13 @@ def spider(filename, id):
     cv = ''
     name = bs.select('#work_name')[0].text.strip()
     name = re.sub(r"【.*?】", "", name)
+    name=name.strip()
 
     for i in bs.select('#work_outline>tr'):
         if i.th.text == '声優' or i.th.text == '声优':
             cv = i.td.text.replace('/', ' ')
             cv = ';'.join(cv.split())
-    group = bs.select('.maker_name>a')[0].text
+    group = bs.select('.maker_name>a')[0].text.strip()
     # imgurl = r'https:' + bs.select('.active>img')[0]['src']
     imgurl = r'https:' + bs.select('.active>picture>img')[0]['srcset']
     urllib.request.urlretrieve(imgurl, Path(filename) / (id + ".jpg"))
@@ -347,12 +372,15 @@ def spider(filename, id):
 
 # 清理空文件夹，并找到RJ号开头的文件夹
 def clear(filename):
+    no_process=['original_lrc']
     flag = True
     while (flag):
         flag = False
         for root, dirs, files in os.walk(filename.__str__()):
+            if Path(root).name in no_process:
+                continue
             if len(dirs) == 1 and len(files) == 0:
-                os.rename(os.path.join(root, dirs[0]), os.path.join(os.path.dirname(root), dirs[0]) + '.voiceWorkTemp')
+                Path.rename(Path(root)/dirs[0], Path(root).parent / (dirs[0] + '.voiceWorkTemp'))
                 mv_to_trush(root)
                 if dirs[0] not in Path(root).stem.split('-'):
                     file = root + '-' + dirs[0]
@@ -360,13 +388,12 @@ def clear(filename):
                     file = root
                 if root == filename.__str__():
                     filename = Path(file)
-                os.rename(os.path.join(os.path.dirname(root), dirs[0]) + '.voiceWorkTemp',
-                          file)
+                Path.rename(Path(root).parent/(dirs[0] + '.voiceWorkTemp'),Path(file))
                 flag = True
                 break
             if len(dirs) == 0 and len(files) == 1:
-                os.rename(os.path.join(root, files[0]),
-                          os.path.join(os.path.dirname(root), files[0]) + '.voiceWorkTemp')
+                Path.rename(Path(root)/files[0],
+                            Path(root).parent/(files[0] + '.voiceWorkTemp'))
                 mv_to_trush(root)
                 if files[0].split('.')[0] not in Path(root).stem.split('-'):
                     file = root + '-' + files[0]
@@ -374,8 +401,7 @@ def clear(filename):
                     file = root + Path(files[0]).suffix
                 if root == filename.__str__():
                     filename = Path(file)
-                os.replace(os.path.join(os.path.dirname(root), files[0]) + '.voiceWorkTemp',
-                           file)
+                Path.rename(Path(root).parent / (files[0] + '.voiceWorkTemp'),Path(file))
                 flag = True
                 break
             if len(dirs) == 0 and len(files) == 0:
@@ -454,7 +480,7 @@ def trans_wav_or_flac_to_mp3(filesname):
 
 # 解压缩
 def file_unzip(filename, passwd):
-    notzip = ['.lrc', '.ass', '.ini', '.url', '.apk', '.heic']
+    notzip = ['.lrc', '.ass', '.ini', '.url', '.apk', '.heic','.chinese_title']
     maybezip = ['.rar', '.zip', '.7z']
     if filename.exists() and filename.is_file():
         if len(filename.suffixes) >= 2 and (mimetypes.guess_type(filename) == (
@@ -494,10 +520,15 @@ def file_unzip(filename, passwd):
             if not result:
                 mv_to_trush(filename)
                 filename = filename.with_suffix('')
-                os.rename(output, filename)
+                output.replace(filename)
                 for file in filename.rglob('*'):
                     file_unzip(file, passwd)
-    return filename
+        else:
+            return filename
+        if result:
+            show(f'--{filename.name}解压失败')
+        return filename
+
 
 
 def mv_to_trush(filename):
@@ -579,6 +610,6 @@ if __name__ == '__main__':
     info_text = info_register()
     # 主逻辑
     global pool
-    pool = ThreadPoolExecutor(max_workers=2)
+    pool = ThreadPoolExecutor(max_workers=5)
     windnd.hook_dropfiles(window, func=dragged_files, force_unicode='utf-8')
     tk.mainloop()
