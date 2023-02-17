@@ -27,6 +27,9 @@ def transform_lrc(input: Path, output: Optional[Path] = None, ops: str = 'add', 
         output = input
     with open(input, 'rb') as f:
         result = chardet.detect(f.read())
+    if result['encoding'] == None:
+        result['encoding'] = 'utf-8'
+
     if 'SIG' in result['encoding']:
         with open(input,'rb') as f:
             lrc_string=f.read()[3:]
@@ -47,6 +50,15 @@ def transform_lrc(input: Path, output: Optional[Path] = None, ops: str = 'add', 
     else:
         raise Exception("未知编码")
     subs_output = pylrc.parse('')
+    lrc=''
+    for line in lrc_string.splitlines():
+        if len(line)>=7 and line[6]==':':
+            line=list(line)
+            line[6]='.'
+            line=''.join(line)
+        lrc+=line
+        lrc+='\n'
+    lrc_string=lrc
     subs_input = pylrc.parse(lrc_string)
     first_line = 0
 
@@ -71,7 +83,6 @@ def transform_lrc(input: Path, output: Optional[Path] = None, ops: str = 'add', 
         output = output.with_suffix('.srt')
     elif file_type == 'lrc':
         lrc_string = subs_output.toLRC()
-
     with open(output, 'w',encoding='utf-8') as lrc_file:
         lrc_file.write(lrc_string)
 
