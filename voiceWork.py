@@ -10,9 +10,13 @@ import tkinter as tk
 import traceback
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, wait
+from copy import deepcopy
 from pathlib import Path
+from typing import Optional
 
 import Levenshtein
+import chardet
+import pylrc
 import windnd
 from PIL import Image as img
 from bs4 import BeautifulSoup
@@ -20,9 +24,10 @@ from mutagen.id3 import ID3FileType, APIC, TIT2, TPE1, TALB, TPE2, TRCK
 from pydub import AudioSegment
 from win32com.shell import shell, shellcon
 
-# 拖拽时执行的函数
-from transform_lrc import transform_lrc
 from translate import translate
+
+
+# 拖拽时执行的函数
 
 
 def dragged_files(files):
@@ -145,6 +150,80 @@ def mv_lrc(filename):
 
     clear_empty_dir(filename)
 
+
+def transform_lrc(input: Path, output: Optional[Path] = None, ops: str = 'add', file_type: str = 'lrc',
+                  deleted: bool = False) -> None:
+    if 'original_lrc' in input.parts:
+        return
+    show(f"--处理lrc:{input}")
+    if not (input.parent / 'original_lrc').exists():
+        Path.mkdir(input.parent / 'original_lrc')
+    if not (input.parent / 'original_lrc' / input.name).exists():
+        shutil.copy(input, input.parent / 'original_lrc' / input.name)
+    if deleted:
+        mv_to_trush(input.parent / 'original_lrc')
+    if output is None:
+        output = input
+    with open(input, 'rb') as f:
+        result = chardet.detect(f.read())
+    if result['encoding'] == None:
+        result['encoding'] = 'utf-8'
+
+    if 'SIG' in result['encoding']:
+        with open(input, 'rb') as f:
+            lrc_string = f.read()[3:]
+        with open(input, 'wb') as f:
+            f.write(lrc_string)
+        with open(input, 'rb') as f:
+            result = chardet.detect(f.read())
+    encodings = [result['encoding'], 'gbk', 'utf-8']
+    with open(input, 'rb') as f:
+        lrc_file = f.read()
+    for encoding in encodings:
+        try:
+            lrc_string = lrc_file.decode(encoding)
+        except:
+            pass
+        else:
+            break
+    else:
+        raise Exception("未知编码")
+    subs_output = pylrc.parse('')
+    lrc = ''
+    for line in lrc_string.splitlines():
+        if len(line) >= 7 and line[6] == ':':
+            line = list(line)
+            line[6] = '.'
+            line = ''.join(line)
+        lrc += line
+        lrc += '\n'
+    lrc_string = lrc
+    subs_input = pylrc.parse(lrc_string)
+    first_line = 0
+
+    if ops == 'add':
+        for sub in subs_input:
+            if first_line == 0:
+                subs_output.append(sub)
+                first_line = 1
+                continue
+            if sub.text.strip() != '':
+                sub_insert = deepcopy(sub)
+                sub_insert.shift(milliseconds=-1)
+                sub_insert.text = ''
+                subs_output.append(sub_insert)
+                subs_output.append(sub)
+    elif ops == 'delete':
+        for sub in subs_input:
+            if sub.text.strip() != '':
+                subs_output.append(sub)
+    if file_type == 'srt':
+        lrc_string = subs_output.toSRT()
+        output = output.with_suffix('.srt')
+    elif file_type == 'lrc':
+        lrc_string = subs_output.toLRC()
+    with open(output, 'w', encoding='utf-8') as lrc_file:
+        lrc_file.write(lrc_string)
 
 def clear_empty_dir(filename):
     for dir in filename.iterdir():
