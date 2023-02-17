@@ -44,12 +44,17 @@ def process(filename):
         extract_mp3_from_video(filename)
         filename = clear(filename)
         RJ = RJ_No(filename)
-        if not RJ or filename.is_file():
+        if not RJ:
             show(f"--处理完成，文件位于{filename}")
             return
         for filename, id in RJ.items():
             show(f"开始处理{id}")
-            mv_dir(filename,filename.with_name(id))
+            if filename.is_file():
+                if not filename.with_suffix('').exists():
+                    filename.with_suffix('').mkdir()
+                filename.rename(filename.with_suffix('') / filename.name)
+            else:
+                mv_dir(filename,filename.with_name(id))
             filename= filename.with_name(id)
             tags = spider(filename, id)
             if not tags:
@@ -694,6 +699,7 @@ def extract_mp3_from_video(filesname):
                 audio.export(filename.with_suffix('.mp3'), format="mp3")
                 mv_to_trush(filename)
 # 解压缩
+
 def file_unzip(filename, passwd):
     notzip = ['.lrc', '.ass', '.ini', '.url', '.apk', '.heic','.chinese_title','.srt']
     maybezip = ['.rar', '.zip', '.7z','.exe']
@@ -783,8 +789,6 @@ def change_lrc(filename):
     elif filename.is_dir():
         for file in Path(filename).rglob("*.lrc"):
             transform_lrc(file, ops=ops, file_type=file_type)
-
-
 
 
 def info_register():
