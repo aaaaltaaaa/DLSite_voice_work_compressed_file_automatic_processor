@@ -331,20 +331,8 @@ def pre_clear(filename):
 
 
 def change_name(filename, tags, id):
-    # 合并相同RJ
-    original_RJ_path=Path(r'E:\音声\RJ')
-    chinese_RJ_path=Path(r'E:\音声\RJ汉化')
-    move_to_RJ= archive_checked.get()
-    if move_to_RJ:
-        RJ_path=[original_RJ_path, chinese_RJ_path ]
-    else:
-        RJ_path=[]
-    othername_list = get_other_name(filename,id, RJ_path)
-    for othername in othername_list:
-        if othername and othername.exists():
-            filename=mv_dir(othername, filename)
-
     group, title, cv = tags
+    # 查找翻译好的中文标题
     t=None
     for _ in filename.rglob('*.chinese_title'):
         t=_
@@ -359,11 +347,12 @@ def change_name(filename, tags, id):
         Path.touch((filename / title).with_suffix('.chinese_title'))
         title=title.split(']')
         title=title[-1]
+    # 翻译标题
     if translate_checked.get():
         trans = translate(title)
         if 'from' in trans and trans['from'] != 'zh':
             title = trans['trans_result'][0]['dst']
-
+    # 构建文件名
     newname=id
     lcr = 0
     mp3 = 0
@@ -384,36 +373,36 @@ def change_name(filename, tags, id):
     if cv_checked.get() and cv != '':
         newname = newname + ' ' + r'(CV ' + ' '.join(cv.split(';')) + ')'
     newname = re.sub('[\\\/:\*\?"<>\|]', '', newname)
-    if move_to_RJ:
+    # 合并相同RJ
+    original_RJ_path = Path(r'E:\音声\RJ')
+    chinese_RJ_path = Path(r'E:\音声\RJ汉化')
+    others_RJ_path = []
+    archive = archive_checked.get()
+    if archive:
         if lcr:
             newname = chinese_RJ_path / newname
         else:
-            newname= original_RJ_path/ newname
+            newname = original_RJ_path / newname
+        if archive:
+            RJ_path = [original_RJ_path, chinese_RJ_path] + others_RJ_path
+        else:
+            RJ_path = []
+        othername_list = get_other_name(filename, id, RJ_path)
+        for othername in othername_list:
+            if othername and othername.exists():
+                mv_dir(othername, newname)
+        mv_dir(filename, newname)
     else:
         newname=filename.parent / newname
-    mv_dir(filename, newname)
+        mv_dir(filename, newname)
+
     show(f"--已重命名文件夹为{newname.name}")
     return newname
 
 
-def mv_dir(filename, newname):
-    if filename.drive!= newname.drive:
-        if filename.drive == 'E:':
-            name = filename
-            filename = newname
-            newname = name
-        filename.replace(filename.with_suffix(".voiceWorkTemp"))
-        filename = filename.with_suffix(".voiceWorkTemp")
-        if (newname.parent / filename.name).exists():
-            mv_to_trush(newname.parent / filename.name)
-        shutil.move(filename,newname.parent/filename.name)
-        if filename.exists():
-            mv_to_trush(filename)
-        filename= newname.parent / filename.name
-
-    if not filename.exists():
-        return
-    if newname != filename:
+def mv_dir(filename, newname, replace=True):
+    # 移动
+    if filename.exists() and newname != filename:
         for file in filename.rglob("*"):
             if file.exists() and file.is_file():
                 new = newname / file.relative_to(filename)
@@ -421,11 +410,13 @@ def mv_dir(filename, newname):
                     new.parent.mkdir(parents=True)
                 try:
                     if not new.exists():
-                        file.replace(new)
+                        if replace:
+                            shutil.move(file,new)
+                        else:
+                            shutil.copy(file,new)
                 except:
                     pass
-        filename=clear(filename)
-        if filename.exists():
+        if replace and filename.exists():
             mv_to_trush(filename)
     return newname
 
