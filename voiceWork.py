@@ -45,6 +45,8 @@ def process(filename):
             show(f"--处理完成，文件位于{filename}")
             return
 
+        extract_mp3_from_video(filename)
+
         RJ = RJ_No(filename)
         if not RJ:
             show(f"--处理完成，文件位于{filename}")
@@ -64,18 +66,17 @@ def process(filename):
                 mv_dir(filename,filename.with_name(id))
             filename= filename.with_name(id)
             trans_wav_or_flac_to_mp3(filename)
-            extract_mp3_from_video(filename)
             mv_lrc(filename)
             change_lrc(filename)
             filename=archieve(filename)
             if work_mode.get() == 2:
                 show(f"--处理完成，文件位于{filename}")
-                return
+                continue
 
             tags = spider(filename, id)
             if not tags:
                 show(f"--处理完成，文件位于{filename}")
-                return
+                continue
             change_tags(filename, tags, filename / (id + '.jpg'))
             filename = change_name(filename, tags, id)
             find_no_mp3(filename)
@@ -275,18 +276,22 @@ def get_icon(id, newname):
 
 
 def unzip(filename):
-    passwd = filename.stem.split()
     try:
-        with open('config.txt', encoding='utf-8') as f:
-            passwd.extend([i.strip() for i in f.readlines()[9:]])
+        passwd = filename.stem.split()
+        try:
+            with open('config.txt', encoding='utf-8') as f:
+                passwd.extend([i.strip() for i in f.readlines()[9:]])
+        except:
+            pass
+        if filename.is_file():
+            filename = file_unzip(filename, passwd)
+        elif filename.is_dir():
+            for file in filename.rglob('*'):
+                file_unzip(file, passwd)
     except:
-        pass
-    if filename.is_file():
-        filename = file_unzip(filename, passwd)
-    elif filename.is_dir():
-        for file in filename.rglob('*'):
-            file_unzip(file, passwd)
+        show(f'{filename}解压失败')
     return filename
+
 
 
 def RJ_No(filename):
@@ -457,7 +462,7 @@ def mv_dir(filename, newname, replace=True):
                 except:
                     pass
         if replace and filename.exists():
-            mv_to_trush(filename)
+            shutil.rmtree(filename)
     return newname
 
 
@@ -704,21 +709,24 @@ def trans_wav_or_flac_to_mp3(filesname):
 
 
 def extract_mp3_from_video(filesname):
-    if not extract_checked.get():
-        return
-    video= ['.mp4', '.ts','.mkv','.webm']
-    if filesname.is_file() and filesname.suffix in video:
-        show(f'--开始提取{filesname}')
-        audio = AudioSegment.from_file(filesname)
-        audio.export(filesname.with_suffix('.mp3'), format="mp3")
-        mv_to_trush(filesname)
-    else:
-        for filename in Path(filesname).rglob('*'):
-            if filename.is_file() and filename.suffix in video:
-                show(f'--开始提取{filename}')
-                audio = AudioSegment.from_file(filename)
-                audio.export(filename.with_suffix('.mp3'), format="mp3")
-                mv_to_trush(filename)
+    try:
+        if not extract_checked.get():
+            return
+        video= ['.mp4', '.ts','.mkv','.webm']
+        if filesname.is_file() and filesname.suffix in video:
+            show(f'--开始提取{filesname}')
+            audio = AudioSegment.from_file(filesname)
+            audio.export(filesname.with_suffix('.mp3'), format="mp3")
+            mv_to_trush(filesname)
+        else:
+            for filename in Path(filesname).rglob('*'):
+                if filename.is_file() and filename.suffix in video:
+                    show(f'--开始提取{filename}')
+                    audio = AudioSegment.from_file(filename)
+                    audio.export(filename.with_suffix('.mp3'), format="mp3")
+                    mv_to_trush(filename)
+    except:
+        show('--提取MP3失败')
 # 解压缩
 
 def file_unzip(filename, passwd):
@@ -835,7 +843,7 @@ window = tk.Tk()
 if __name__ == '__main__':
     # 窗口信息
     window.title('音声文件夹整理')
-    window.geometry('400x600')
+    window.geometry('400x700')
     window.update()
 
     # 提示信息
