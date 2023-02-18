@@ -37,9 +37,9 @@ def translate(query=''):
 
 
 def set_appid_and_key():
-    with open('baidu.txt','r') as f:
+    with open('config.txt','r',encoding='utf-8') as f:
         lines=f.readlines()
-    return lines[0].strip(),lines[1].strip()
+    return lines[1].strip(),lines[3].strip()
 
 if __name__ == '__main__':
 

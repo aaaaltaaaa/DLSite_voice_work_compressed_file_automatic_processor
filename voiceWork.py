@@ -40,15 +40,22 @@ def process(filename):
         show(f"开始处理{filename}")
         filename = Path(filename)
         filename = unzip(filename)
-        trans_wav_or_flac_to_mp3(filename)
-        extract_mp3_from_video(filename)
         filename = clear(filename)
+        if work_mode.get()==1:
+            show(f"--处理完成，文件位于{filename}")
+            return
+
         RJ = RJ_No(filename)
         if not RJ:
             show(f"--处理完成，文件位于{filename}")
             return
+
         for filename, id in RJ.items():
+            while filename.with_name(id).exists() and filename.with_name(id)!=filename:
+                pass
+
             show(f"开始处理{id}")
+
             if filename.is_file():
                 if not filename.with_suffix('').exists():
                     filename.with_suffix('').mkdir()
@@ -56,13 +63,21 @@ def process(filename):
             else:
                 mv_dir(filename,filename.with_name(id))
             filename= filename.with_name(id)
+            trans_wav_or_flac_to_mp3(filename)
+            extract_mp3_from_video(filename)
+            mv_lrc(filename)
+            change_lrc(filename)
+            filename=archieve(filename)
+            if work_mode.get() == 2:
+                show(f"--处理完成，文件位于{filename}")
+                return
+
             tags = spider(filename, id)
             if not tags:
+                show(f"--处理完成，文件位于{filename}")
                 return
             change_tags(filename, tags, filename / (id + '.jpg'))
             filename = change_name(filename, tags, id)
-            mv_lrc(filename)
-            change_lrc(filename)
             find_no_mp3(filename)
             icon(id, filename)
             show(f"处理完成，文件位于{filename}")
@@ -81,12 +96,12 @@ def find_no_mp3(filename):
         if flag == 1:
             break
     if flag == 0:
-        error(filename,'缺少音声')
+        warning(filename, '缺少音声')
 
 
-def error(filename,e):
-    with open('error.txt', 'a+',encoding='utf-8') as f:
-        show(f'error:{filename}'+e)
+def warning(filename, e):
+    with open('warning.txt', 'a+',encoding='utf-8') as f:
+        show(f'warning:{filename}'+e)
         writer=csv.writer(f)
         writer.writerow([filename,e])
 
@@ -160,7 +175,7 @@ def transform_lrc(input: Path, output: Optional[Path] = None, ops: str = 'add', 
                   deleted: bool = False) -> None:
     if 'original_lrc' in input.parts:
         return
-    show(f"--处理lrc:{input}")
+    # show(f"--处理lrc:{input}")
     if not (input.parent / 'original_lrc').exists():
         Path.mkdir(input.parent / 'original_lrc')
     if not (input.parent / 'original_lrc' / input.name).exists():
@@ -261,10 +276,11 @@ def get_icon(id, newname):
 
 def unzip(filename):
     passwd = filename.stem.split()
-    if Path('passwd.txt').exists():
-        with open('passwd.txt', encoding='utf-8') as f:
-            passwd.extend([i.strip() for i in f.readlines()])
-    pre_clear(filename)
+    try:
+        with open('config.txt', encoding='utf-8') as f:
+            passwd.extend([i.strip() for i in f.readlines()[9:]])
+    except:
+        pass
     if filename.is_file():
         filename = file_unzip(filename, passwd)
     elif filename.is_dir():
@@ -325,10 +341,6 @@ def show(info):
         pass
 
 
-def pre_clear(filename):
-    for file in filename.rglob('*baiduyun*'):
-        mv_to_trush(file)
-
 
 def change_name(filename, tags, id):
     group, title, cv = tags
@@ -348,24 +360,29 @@ def change_name(filename, tags, id):
         title=title.split(']')
         title=title[-1]
     # 翻译标题
-    if translate_checked.get():
-        trans = translate(title)
-        if 'from' in trans and trans['from'] != 'zh':
-            title = trans['trans_result'][0]['dst']
+    try:
+        if translate_checked.get():
+            trans = translate(title)
+            if 'from' in trans and trans['from'] != 'zh':
+                title = trans['trans_result'][0]['dst']
+    except:
+        pass
     # 构建文件名
     newname=id
     lcr = 0
-    mp3 = 0
+    audio_list=['.mp3','.mp4','.wav','flac']
+    audio=0
     for _ in Path(filename).rglob('*.lrc'):
         lcr = 1
         break
-    for _ in Path(filename).rglob('*.mp3'):
-        mp3 = 1
-        break
+    for _ in Path(filename).rglob('*'):
+        if _.suffix in audio_list:
+            audio=1
+            break
     if lcr == 1:
         newname = newname + ' ' + '[汉化]'
-    if mp3 == 0:
-        newname = newname + ' ' + '[无mp3]'
+    if audio == 0:
+        newname = newname + ' ' + '[缺少音频]'
     if group_checked.get():
         newname = newname + ' ' + '[' + group + ']'
     if title_checked.get():
@@ -373,30 +390,53 @@ def change_name(filename, tags, id):
     if cv_checked.get() and cv != '':
         newname = newname + ' ' + r'(CV ' + ' '.join(cv.split(';')) + ')'
     newname = re.sub('[\\\/:\*\?"<>\|]', '', newname)
-    # 合并相同RJ
-    original_RJ_path = Path(r'E:\音声\RJ')
-    chinese_RJ_path = Path(r'E:\音声\RJ汉化')
-    others_RJ_path = []
+    mv_dir(filename,filename.with_name(newname))
+
+    show(f"--已重命名文件夹为{newname}")
+    return filename.with_name(newname)
+
+def archieve(filename):
     archive = archive_checked.get()
+    replace=copy_checked.get()
     if archive:
-        if lcr:
-            newname = chinese_RJ_path / newname
-        else:
-            newname = original_RJ_path / newname
-        if archive:
-            RJ_path = [original_RJ_path, chinese_RJ_path] + others_RJ_path
-        else:
-            RJ_path = []
+        # 合并同RJ
+        id = filename.name
+        lrc = 0
+        for _ in Path(filename).rglob('*.lrc'):
+            lrc = 1
+            break
+        try:
+            with open('config.txt', 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                original_RJ_path = Path(lines[5].strip())
+                chinese_RJ_path = Path(lines[7].strip())
+        except:
+            original_RJ_path= Path('.')
+            chinese_RJ_path= Path('.')
+        others_RJ_path = []
+        RJ_path = [original_RJ_path, chinese_RJ_path] + others_RJ_path
         othername_list = get_other_name(filename, id, RJ_path)
+
+        newname=None
+        for file in othername_list:
+            if file.parent==chinese_RJ_path:
+                newname = file
+                break
+        if not newname and lrc==1:
+            newname= chinese_RJ_path/id
+        if not newname:
+            for file in othername_list:
+                if file.parent == original_RJ_path:
+                    newname = file
+                    break
+        if not newname:
+            newname= original_RJ_path/id
+
         for othername in othername_list:
             if othername and othername.exists():
-                mv_dir(othername, newname)
-        mv_dir(filename, newname)
-    else:
-        newname=filename.parent / newname
-        mv_dir(filename, newname)
-
-    show(f"--已重命名文件夹为{newname.name}")
+                mv_dir(othername, newname, replace)
+        # 移动文件
+        mv_dir(filename, newname, replace)
     return newname
 
 
@@ -488,22 +528,8 @@ def set_Info(path, info):
 
 # 爬取信息与图片
 def spider(filename, id):
-    if not spider_checked.get():
-        return None,None,None
     show('--开始爬取信息')
     url = 'https://www.dlsite.com/maniax/work/=/product_id/' + id + '.html'
-    headers = {
-        'authority': 'www.dlsite.com',
-        'upgrade-insecure-requests': '1',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.89 Safari/537.36',
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
-        'sec-fetch-site': 'same-origin',
-        'sec-fetch-mode': 'navigate',
-        'sec-fetch-user': '?1',
-        'sec-fetch-dest': 'document',
-        'accept-language': 'zh-CN,zh;q=0.9',
-        'cookie': 'dlsite_dozen=7; uniqid=dh5wpo6du5; _ga=GA1.2.1094789266.1575957606; _d3date=2019-12-10T06:00:05.977Z; _d3landing=1; _gaid=1094789266.1575957606; adultchecked=1; adr_id=Ub2DpFVcRxLOTwlgsJ1aGEchUBznAqLnj8zWGwt6giSQaWyc; _ebtd=1.k2fnwjp5b.1575971225; locale=zh-cn; Qs_lvt_328467=1577849294^%^2C1577892629^%^2C1577932057^%^2C1591933560; Qs_pv_328467=1052826062922660000^%^2C480504100285960260^%^2C4442059557915936000^%^2C3571252907537905700^%^2C993384634696700900; _ts_yjad=1598842520972; utm_c=blogparts; _inflow_params=^%^7B^%^22referrer_uri^%^22^%^3A^%^22level-plus.net^%^22^%^7D; _inflow_ad_params=^%^7B^%^22ad_name^%^22^%^3A^%^22referral^%^22^%^7D; _im_vid=01ES81S84JB3TTCY5CZRD5EKS5; _gcl_au=1.1.1542253388.1608169517; _gid=GA1.2.1086092439.1612663765; __DLsite_SID=f4ik5q573dn9trjf0rugu9d043; __juicer_sesid_9i3nsdfP_=5c159006-e3e3-4f60-b5fe-dc05c244f1c6; DL_PRODUCT_LOG=^%^2CRJ306930^%^2CRJ300000^%^2CRJ298978^%^2CRJ315336^%^2CRJ315852^%^2CRJ307073^%^2CRJ306798^%^2CRJ309328^%^2CRJ303189^%^2CRJ316357^%^2CRJ234791^%^2CRJ312136^%^2CRJ131395^%^2CRJ282673^%^2CRJ264706^%^2CRJ242260^%^2CRJ250966^%^2CRJ313604^%^2CRJ313754^%^2CRJ295229^%^2CRJ300532^%^2CRJ262976^%^2CRJ311359^%^2CRJ310955^%^2CRJ268194^%^2CRJ289705^%^2CRJ260052^%^2CRJ315474^%^2CRJ316119^%^2CRJ315405^%^2CRJ312692^%^2CRJ167776^%^2CRJ314102^%^2CRJ303183^%^2CRJ309544^%^2CRJ211905^%^2CRJ133234^%^2CRJ307037^%^2CRJ302768^%^2CRJ305343^%^2CRJ299936^%^2CRJ282627^%^2CRJ304923^%^2520^%^2CRJ272689^%^2CRJ303021^%^2CR305282^%^2CRJ297002^%^2CRJ307645^%^2CRJ291292^%^2CRJ295048; _inflow_dlsite_params=^%^7B^%^22dlsite_referrer_url^%^22^%^3A^%^22https^%^3A^%^2F^%^2Fwww.dlsite.com^%^2Fmania x^%^2Fwork^%^2F^%^3D^%^2Fproduct_id^%^2FRJ306798.html^%^22^%^7D; _dctagfq=1356:1613404799.0.0^|1380:1613404799.0.0^|1404:1613404799.0.0^|1428:1613404799.0.0^|1529:1613404799.0.0; __juicer_session_referrer_9i3nsdfP_=5c159006-e3e3-4f60-b5fe-dc05c244f1c6___; _td=287255fd-bbc9-470a-b97d-8c0b1c6b9cd9; _gat=1',
-    }
     headers = {
         "authority": "www.dlsite.com",
         "method": "GET",
@@ -575,35 +601,39 @@ def clear(filename):
         for root, dirs, files in os.walk(filename.__str__()):
             if Path(root).name in no_process:
                 continue
+            fullname=True
             if len(dirs) == 1 and len(files) == 0:
-                Path.rename(Path(root)/dirs[0], Path(root).parent / (Path(root).name.__str__() +'-'+ dirs[0] + '.voiceWorkTemp'))
-                mv_to_trush(root)
-                if dirs[0] not in Path(root).stem.split('-'):
-                    file = root + '-' + dirs[0]
+                if fullname:
+                    file = Path(root + ' ' + dirs[0])
                 else:
-                    file = root
+                    file= Path(root).parent/dirs[0]
                 if root == filename.__str__():
                     filename = Path(file)
-                Path.rename(Path(root).parent / (Path(root).name.__str__() + '-' + dirs[0] + '.voiceWorkTemp'),Path(file))
+                Path.rename(Path(root) / dirs[0],file)
+                shutil.rmtree(root)
                 flag = True
                 break
             if len(dirs) == 0 and len(files) == 1:
-                Path.rename(Path(root)/files[0],
-                            Path(root).parent/(files[0] + '.voiceWorkTemp'))
-                mv_to_trush(root)
-                if files[0].split('.')[0] not in Path(root).stem.split('-'):
-                    file = root + '-' + files[0]
+                if fullname:
+                    file = Path(root + ' ' + files[0])
                 else:
-                    file = root + Path(files[0]).suffix
+                    file = Path(root).parent / files[0]
                 if root == filename.__str__():
                     filename = Path(file)
-                Path.rename(Path(root).parent / (files[0] + '.voiceWorkTemp'),Path(file))
+                Path.rename(Path(root) / files[0],file)
+                shutil.rmtree(root)
                 flag = True
                 break
             if len(dirs) == 0 and len(files) == 0:
-                mv_to_trush(root)
+                shutil.rmtree(root)
                 flag = True
-    return filename
+    newname = []
+    for item in filename.stem.split(' '):
+        if item not in newname:
+            newname.append(item)
+    newname= filename.with_stem(' '.join(newname))
+    mv_dir(filename,newname)
+    return newname
 
 
 # 更改文件夹图标
@@ -793,12 +823,12 @@ def info_register():
 
 
 def spider_switch():
-    state = spider_checked.get()
-    # if not state:
+    spider = 1 if work_mode.get() == 0 else 0
     for button,value in spider_group:
-        value.set(state)
-        button.config(state = 'normal' if state else 'disabled')
-
+        button.config(state = 'normal' if spider else 'disabled')
+    others = 1 if work_mode.get() != 1 else 0
+    for button, value in others_group:
+        button.config(state='normal' if others else 'disabled')
 
 window = tk.Tk()
 
@@ -815,21 +845,32 @@ if __name__ == '__main__':
                                   '如果文件名没有RJ号，会找到并处理文件夹中第一个包含的RJ号的子文件夹，并删除其他所有文件，请谨慎使用。', font=('宋体', 12), fg='red',
                      wraplength=window.winfo_width())
     lable.pack()
-    # 变量
-    global wav_to_mp3_checked
-    wav_to_mp3_checked = checkbox_register('wav转换为mp3')
-    global spider_checked
-    global ops_checked
-    ops_checked = checkbox_register('lrc空行间隔')
-    global type_checked
-    type_checked = checkbox_register('lrc转换为srt', 0)
-    global extract_checked
-    extract_checked = checkbox_register('mp4或ts提取MP3', 0)
-    global archive_checked
-    archive_checked = checkbox_register('归档')
+    # 工作模式
+    global work_mode
+    work_mode = tk.IntVar(value=0)
+    unzip_checked = tk.Radiobutton(text='只解压', variable=work_mode, command=spider_switch, value=1)
+    unzip_checked.pack()
+    onlyRJ_checked = tk.Radiobutton(text='使用RJ号作为文件夹名,不爬信息', variable=work_mode, command=spider_switch, value=2)
+    onlyRJ_checked.pack()
+    spider_checked = tk.Radiobutton(text='爬取dlsite信息', variable=work_mode, command=spider_switch, value=0)
+    spider_checked.pack()
 
-    spider_group=[]
-    spider_checked = checkbox_register('爬取信息',command=spider_switch)
+    # 变量
+    spider_group = []
+    others_group = []
+
+    global wav_to_mp3_checked
+    wav_to_mp3_checked = checkbox_register('wav转换为mp3', group=others_group)
+    global ops_checked
+    ops_checked = checkbox_register('lrc空行间隔', group=others_group)
+    global type_checked
+    type_checked = checkbox_register('lrc转换为srt', 0, group=others_group)
+    global extract_checked
+    extract_checked = checkbox_register('video提取MP3', 0, group=others_group)
+    global archive_checked
+    archive_checked = checkbox_register('归档到指定文件夹', group=others_group)
+    global copy_checked
+    copy_checked = checkbox_register('删除归档前的文件', 1, group=others_group)
     global group_checked
     group_checked = checkbox_register('文件夹名包含社团',group = spider_group)
     global title_checked
