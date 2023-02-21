@@ -1,27 +1,29 @@
+import Levenshtein
+import chardet
 import collections
 import csv
 import logging
 import mimetypes
 import os
+import pylrc
 import re
 import shutil
+import srt
 import stat
 import tkinter as tk
 import traceback
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, wait
-from copy import deepcopy
-from pathlib import Path
-from typing import Optional
-
-import Levenshtein
-import chardet
-import pylrc
 import windnd
 from PIL import Image as img
 from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor, wait
+from copy import deepcopy
 from mutagen.id3 import ID3FileType, APIC, TIT2, TPE1, TALB, TPE2, TRCK
+from pathlib import Path
 from pydub import AudioSegment
+from subprocess import run
+from typing import Optional
+from vtt_to_srt.vtt_to_srt import ConvertFile
 from win32com.shell import shell, shellcon
 
 from translate import translate
@@ -59,28 +61,30 @@ def process(filename):
             show(f"开始处理{id}")
 
             if filename.is_file():
-                if not filename.with_suffix('').exists():
-                    filename.with_suffix('').mkdir()
-                filename.rename(filename.with_suffix('') / filename.name)
+                if filename.suffix in ['.lrc','.mp3','.srt','.mp4','.txt','.wav']:
+                    if not filename.with_name(id).exists():
+                        filename.with_name(id).mkdir()
+                    filename.rename(filename.with_name(id) / filename.name)
+                else:
+                    show(f"--处理完成，文件位于{filename}")
+                    return
             else:
                 mv_dir(filename,filename.with_name(id))
             filename= filename.with_name(id)
             trans_wav_or_flac_to_mp3(filename)
-            mv_lrc(filename)
             change_lrc(filename)
-            filename=archieve(filename)
-            if work_mode.get() == 2:
-                show(f"--处理完成，文件位于{filename}")
-                continue
+            filename = archieve(filename)
+            if work_mode.get() == 0:
+                tags = spider(filename, id)
+                if not tags:
+                    show(f"--处理完成，文件位于{filename}")
+                    continue
+                change_tags(filename, tags, filename / (id + '.jpg'))
+                filename = change_name(filename, tags, id)
+                find_no_mp3(filename)
+                icon(id, filename)
+            mv_lrc(filename)
 
-            tags = spider(filename, id)
-            if not tags:
-                show(f"--处理完成，文件位于{filename}")
-                continue
-            change_tags(filename, tags, filename / (id + '.jpg'))
-            filename = change_name(filename, tags, id)
-            find_no_mp3(filename)
-            icon(id, filename)
             show(f"处理完成，文件位于{filename}")
     except Exception as e:
         show(f"{e}")
@@ -108,66 +112,68 @@ def warning(filename, e):
 
 
 def mv_lrc(filename):
+    for file in filename.rglob('*.lrc'):
+        break
+    else:
+        return
+
     pattern=re.compile('\d+')
     changed=[]
+    # 恢复原本文件名
     for mp3_file in filename.rglob('*.mp3'):
-        mp3_TIT2 = ID3FileType(mp3_file)['TIT2'].__str__()
-        mp3_file.replace(mp3_file.with_name(mp3_TIT2).with_suffix(mp3_file.suffix))
-    for lrc_file in filename.rglob("*.lrc"):
-        if 'original_lrc' in lrc_file.__str__():
+        if 'TIT2' in ID3FileType(mp3_file):
+            mp3_TIT2 = ID3FileType(mp3_file)['TIT2'].__str__()
+            mp3_file.replace(mp3_file.with_name(mp3_TIT2).with_suffix(mp3_file.suffix))
+    # 匹配字幕
+    for mp3_file in filename.rglob('*'):
+        if mp3_file.suffix not in ['.mp3','.flac','.wav'] or mp3_file in changed:
             continue
+        # 得出匹配分数
         distance = collections.OrderedDict()
-        ptn_lrc = []
-        for i in pattern.findall(lrc_file.stem):
-            ptn_lrc.append(''.join([str(int(j)) for j in list(i)]))
-        ptn_lrc = ' '.join(ptn_lrc)
-        for mp3_file in lrc_file.parent.rglob('*.mp3'):
-            if mp3_file not in changed:
-                mp3_TIT2 = ID3FileType(mp3_file)['TIT2'].__str__()
-                ptn_mp3=[]
-                for i in pattern.findall(mp3_TIT2):
-                    ptn_mp3.append(''.join([str(int(j)) for j in list(i)]))
-                ptn_mp3=' '.join(ptn_mp3)
-                try:
-                    # distance[Levenshtein.jaro(str(int(pattern.findall(lrc_file.stem)[0])),
-                    #                           str(int(num)))] = mp3_file
-                    distance[Levenshtein.jaro(ptn_mp3,
-                                              ptn_lrc)] = mp3_file
-                except:
-                    distance[Levenshtein.jaro(lrc_file.stem, mp3_file.stem)] = mp3_file
+        for lrc_file in filename.rglob("*.lrc"):
+            if 'original_lrc' in lrc_file.__str__():
+                continue
+            ptn_lrc = []
+            for i in pattern.findall(lrc_file.stem):
+                ptn_lrc.append(''.join([str(int(j)) for j in list(i)]))
+            ptn_lrc = ' '.join(ptn_lrc)
+
+            # mp3_TIT2 = ID3FileType(mp3_file)['TIT2'].__str__()
+            ptn_mp3=[]
+            for i in pattern.findall(mp3_file.name):
+                ptn_mp3.append(''.join([str(int(j)) for j in list(i)]))
+            ptn_mp3=' '.join(ptn_mp3)
+            try:
+                # distance[Levenshtein.jaro(str(int(pattern.findall(lrc_file.stem)[0])),
+                #                           str(int(num)))] = mp3_file
+                distance[Levenshtein.jaro(ptn_mp3,
+                                          ptn_lrc)] = lrc_file
+            except:
+                distance[Levenshtein.jaro(lrc_file.stem, mp3_file.stem)] = lrc_file
         if len(distance)==0:
-            for mp3_file in filename.rglob("*.mp3"):
-                if mp3_file not in changed:
-                    ptn_mp3 = ' '.join(pattern.findall(mp3_file.stem))
-                    try:
-                        # distance[Levenshtein.jaro(str(int(pattern.findall(lrc_file.stem)[0])), str(int(pattern.findall(mp3_file.stem)[0])))]=mp3_file
-                        distance[Levenshtein.jaro(ptn_mp3,
-                                                  ptn_lrc)] = mp3_file
-                    except:
-                        distance[Levenshtein.jaro(lrc_file.stem, mp3_file.stem)]=mp3_file
-        if len(distance)==0:
-            # show(f"--{filename.name}:{Path(lrc_file).name}没有对应的MP3")
+            show(f"--{filename.name}:{Path(mp3_file).name}没有对应的LRC")
             continue
-        mp3_file_list=[]
+        # 寻找最匹配的lrc
+        lrc_file_list=[]
         for k,v in distance.items():
-            if v.stem==lrc_file.stem:
-                mp3_file_list.append(v)
+            if v.stem==mp3_file.stem:
+                lrc_file_list.append(v)
                 break
         else:
             score=sorted(list(distance.items()))[-1][0]
             for k, v in distance.items():
                 if k == score:
-                    mp3_file_list.append(v)
+                    lrc_file_list.append(v)
                     break
-        for mp3_file in mp3_file_list:
+        # 移动
+        for lrc_file in lrc_file_list:
             if not (mp3_file.parent / lrc_file.name).exists():
                 if lrc_file.exists():
                     lrc_file.replace(mp3_file.parent / lrc_file.name)
-            if not mp3_file.with_name(lrc_file.name).with_suffix(mp3_file.suffix).exists():
+            if not mp3_file.with_stem(lrc_file.stem).exists():
                 if mp3_file.exists():
-                    newname= mp3_file.with_name(lrc_file.name).with_suffix(mp3_file.suffix)
-                    mp3_file.replace(newname)
-                    changed.append(newname)
+                    mp3_file.replace(mp3_file.with_stem(lrc_file.stem))
+                    changed.append(mp3_file.with_stem(lrc_file.stem))
 
     clear_empty_dir(filename)
 
@@ -177,27 +183,85 @@ def transform_lrc(input: Path, output: Optional[Path] = None, ops: str = 'add', 
     if 'original_lrc' in input.parts:
         return
     # show(f"--处理lrc:{input}")
-    if not (input.parent / 'original_lrc').exists():
-        Path.mkdir(input.parent / 'original_lrc')
-    if not (input.parent / 'original_lrc' / input.name).exists():
-        shutil.copy(input, input.parent / 'original_lrc' / input.name)
-    if deleted:
-        mv_to_trush(input.parent / 'original_lrc')
-    if output is None:
-        output = input
-    with open(input, 'rb') as f:
-        result = chardet.detect(f.read())
-    if result['encoding'] == None:
-        result['encoding'] = 'utf-8'
+    # vtt转srt,lrc
+    try:
+        if input.suffix == '.vtt':
+            if not input.with_stem(input.name.split('.')[0]).with_suffix('.srt').exists():
+                convert_file = ConvertFile(input.__str__(), "utf-8")
+                convert_file.convert()
+                input.with_suffix('.srt').replace(input.with_stem(input.name.split('.')[0]).with_suffix('.srt'))
+            input=input.with_stem(input.name.split('.')[0]).with_suffix('.srt')
 
-    if 'SIG' in result['encoding']:
-        with open(input, 'rb') as f:
-            lrc_string = f.read()[3:]
-        with open(input, 'wb') as f:
-            f.write(lrc_string)
-        with open(input, 'rb') as f:
-            result = chardet.detect(f.read())
-    encodings = [result['encoding'], 'gbk', 'utf-8']
+
+        if input.suffix == '.srt':
+            if not input.with_suffix('.lrc').exists():
+                encodings=get_encoding(input)
+                vtt=open_file(encodings,input)
+                vtt=srt.parse(vtt)
+                subs_output = pylrc.parse('')
+                for item in list(vtt):
+                    sec = srt.timedelta.total_seconds(item.start)
+                    time = item.start.__str__().split(':')[1:]
+                    time[0] = str(int(sec // 60))
+                    time[1] = time[1][0:5]
+                    lyc = pylrc.classes.LyricLine('[' + ':'.join(time) + ']', item.content)
+                    subs_output.append(lyc)
+                if not input.with_suffix('.lrc').exists():
+                    with open(input.with_suffix('.lrc'), 'w', encoding='utf-8') as lrc_file:
+                        lrc_file.write(subs_output.toLRC())
+            input = input.with_suffix('.lrc')
+
+
+        if not (input.parent / 'original_lrc').exists():
+            Path.mkdir(input.parent / 'original_lrc')
+        if not (input.parent / 'original_lrc' / input.name).exists():
+            shutil.copy(input, input.parent / 'original_lrc' / input.name)
+        if deleted:
+            mv_to_trush(input.parent / 'original_lrc')
+        if output is None:
+            output = input
+        encodings = get_encoding(input)
+        lrc_string = open_file(encodings, input)
+        subs_output = pylrc.parse('')
+        lrc = ''
+        for line in lrc_string.splitlines():
+            if len(line) >= 7 and line[6] == ':':
+                line = list(line)
+                line[6] = '.'
+                line = ''.join(line)
+            lrc += line
+            lrc += '\n'
+        lrc_string = lrc
+        subs_input = pylrc.parse(lrc_string)
+        first_line = 0
+
+        if ops == 'add':
+            for sub in subs_input:
+                if first_line == 0:
+                    subs_output.append(sub)
+                    first_line = 1
+                    continue
+                if sub.text.strip() != '':
+                    sub_insert = deepcopy(sub)
+                    sub_insert.shift(milliseconds=-1)
+                    sub_insert.text = ''
+                    subs_output.append(sub_insert)
+                    subs_output.append(sub)
+        elif ops == 'delete':
+            for sub in subs_input:
+                if sub.text.strip() != '':
+                    subs_output.append(sub)
+        if file_type == 'srt':
+            lrc_string = subs_output.toSRT()
+            output = output.with_suffix('.srt')
+        elif file_type == 'lrc':
+            lrc_string = subs_output.toLRC()
+        with open(output, 'w', encoding='utf-8') as lrc_file:
+            lrc_file.write(lrc_string)
+    except:
+        pass
+
+def open_file(encodings, input):
     with open(input, 'rb') as f:
         lrc_file = f.read()
     for encoding in encodings:
@@ -209,42 +273,24 @@ def transform_lrc(input: Path, output: Optional[Path] = None, ops: str = 'add', 
             break
     else:
         raise Exception("未知编码")
-    subs_output = pylrc.parse('')
-    lrc = ''
-    for line in lrc_string.splitlines():
-        if len(line) >= 7 and line[6] == ':':
-            line = list(line)
-            line[6] = '.'
-            line = ''.join(line)
-        lrc += line
-        lrc += '\n'
-    lrc_string = lrc
-    subs_input = pylrc.parse(lrc_string)
-    first_line = 0
+    return lrc_string
 
-    if ops == 'add':
-        for sub in subs_input:
-            if first_line == 0:
-                subs_output.append(sub)
-                first_line = 1
-                continue
-            if sub.text.strip() != '':
-                sub_insert = deepcopy(sub)
-                sub_insert.shift(milliseconds=-1)
-                sub_insert.text = ''
-                subs_output.append(sub_insert)
-                subs_output.append(sub)
-    elif ops == 'delete':
-        for sub in subs_input:
-            if sub.text.strip() != '':
-                subs_output.append(sub)
-    if file_type == 'srt':
-        lrc_string = subs_output.toSRT()
-        output = output.with_suffix('.srt')
-    elif file_type == 'lrc':
-        lrc_string = subs_output.toLRC()
-    with open(output, 'w', encoding='utf-8') as lrc_file:
-        lrc_file.write(lrc_string)
+
+def get_encoding(input):
+    with open(input, 'rb') as f:
+        result = chardet.detect(f.read())
+    if result['encoding'] == None:
+        result['encoding'] = 'utf-8'
+    if 'SIG' in result['encoding']:
+        with open(input, 'rb') as f:
+            lrc_string = f.read()[3:]
+        with open(input, 'wb') as f:
+            f.write(lrc_string)
+        with open(input, 'rb') as f:
+            result = chardet.detect(f.read())
+    encodings = [result['encoding'], 'gbk', 'utf-8']
+    return encodings
+
 
 def clear_empty_dir(filename):
     for dir in filename.iterdir():
@@ -252,7 +298,6 @@ def clear_empty_dir(filename):
             dir.rmdir()
         except:
             pass
-
 
 def icon(id, filename):
     if not icon_checked.get():
@@ -262,7 +307,6 @@ def icon(id, filename):
     change_icon(iconPath)
     show('--已设置文件图标。')
     # mv_dir(filename.with_suffix('.tmp'), filename)
-
 
 def get_icon(id, newname):
     with img.open(newname / (id + '.jpg')) as image:
@@ -274,15 +318,10 @@ def get_icon(id, newname):
         new_im.save(iconPath)
     return iconPath
 
-
 def unzip(filename):
     try:
         passwd = filename.stem.split()
-        try:
-            with open('config.txt', encoding='utf-8') as f:
-                passwd.extend([i.strip() for i in f.readlines()[9:]])
-        except:
-            pass
+        passwd.extend(read_config('config.txt','保存的密码:'))
         if filename.is_file():
             filename = file_unzip(filename, passwd)
         elif filename.is_dir():
@@ -291,8 +330,6 @@ def unzip(filename):
     except:
         show(f'{filename}解压失败')
     return filename
-
-
 
 def RJ_No(filename):
     if not filename or not filename.exists():
@@ -310,7 +347,9 @@ def RJ_No(filename):
         return RJ
     else:
         for file in filename.rglob("*"):
-            id = re.search("RJ\d{6}", file.name.__str__())
+            id = re.search("RJ\d{8}", file.name.__str__())
+            if not id:
+                id = re.search("RJ\d{6}", file.name.__str__())
             if file.exists() and id:
                 id = (file.name.__str__())[id.regs[0][0]:id.regs[0][1]]
                 show(f'--找到{id}')
@@ -410,14 +449,14 @@ def archieve(filename):
         for _ in Path(filename).rglob('*.lrc'):
             lrc = 1
             break
-        try:
-            with open('config.txt', 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-                original_RJ_path = Path(lines[5].strip())
-                chinese_RJ_path = Path(lines[7].strip())
-        except:
-            original_RJ_path= Path('.')
-            chinese_RJ_path= Path('.')
+        original_RJ_path = Path(read_config('config.txt','RJ归档文件夹:'))
+        chinese_RJ_path = Path(read_config('config.txt', 'RJ汉化归档文件夹:'))
+
+        if not original_RJ_path or not original_RJ_path.is_dir():
+            original_RJ_path = Path(filename.parent)
+        if not chinese_RJ_path or not chinese_RJ_path.is_dir():
+            chinese_RJ_path = Path(filename.parent)
+
         others_RJ_path = []
         RJ_path = [original_RJ_path, chinese_RJ_path] + others_RJ_path
         othername_list = get_other_name(filename, id, RJ_path)
@@ -462,7 +501,13 @@ def mv_dir(filename, newname, replace=True):
                 except:
                     pass
         if replace and filename.exists():
-            shutil.rmtree(filename)
+            try:
+                shutil.rmtree(filename)
+            except:
+                try:
+                    mv_to_trush(filename)
+                except:
+                    pass
     return newname
 
 
@@ -560,7 +605,7 @@ def spider(filename, id):
         try:
             #使用代理尝试
             proxy = {
-                'https': '127.0.0.1:7890'
+                'socks5': '127.0.0.1:7890'
             }
             handler = urllib.request.ProxyHandler(proxies=proxy)
             # 获取opener对象
@@ -637,9 +682,10 @@ def clear(filename):
         if item not in newname:
             newname.append(item)
     newname= filename.with_stem(' '.join(newname))
-    mv_dir(filename,newname)
+    filename.replace(newname)
     return newname
-
+def cmd_call(cmd):
+    return run(cmd, shell=True).returncode
 
 # 更改文件夹图标
 def change_icon(icon):
@@ -652,14 +698,14 @@ def change_icon(icon):
     cmd2 = 'cd "{}"'.format(icon.parent)
     cmd3 = "attrib -h -s desktop.ini"
     cmd = cmd1 + " && " + cmd2 + " && " + cmd3
-    os.system(cmd)
+    cmd_call(cmd)
     with open(root / "desktop.ini", "w+", encoding='utf-8') as inifile:
         inifile.write(iniline)
     cmd1 = icon.drive
     cmd2 = 'cd "{}"'.format(icon.parent)
     cmd3 = "attrib +h +s desktop.ini"
     cmd = cmd1 + " && " + cmd2 + " && " + cmd3
-    os.system(cmd)
+    cmd_call(cmd)
     pass
 
 
@@ -693,19 +739,25 @@ def trans_wav_or_flac_to_mp3(filesname):
                             mv_to_trush(filename)
                             break
 
+    thread_list=[]
     if wav == 1:
         for filename in Path(filesname).rglob('*.wav'):
-            show(f'--转换{filename.stem}')
-            song = AudioSegment.from_file(filename)
-            song.export(filename.with_suffix('.mp3'), format="mp3")
-            mv_to_trush(filename)
+            if filename.suffix == '.wav':
+                thread_list.append(trans_pool.submit(to_mp3,filename))
     if flac == 1:
         for filename in Path(filesname).rglob('*.flac'):
-            show(f'--转换{filename.stem}')
-            song = AudioSegment.from_file(filename)
-            song.export(filename.with_suffix('.mp3'), format="mp3")
-            mv_to_trush(filename)
+            if filename.suffix == '.flac':
+                thread_list.append(trans_pool.submit(to_mp3,filename))
+    for thread in thread_list:
+        thread.result()
     show('--mp3转换完成')
+
+
+def to_mp3(filename):
+    show(f'--转换{filename.stem}')
+    song = AudioSegment.from_file(filename)
+    song.export(filename.with_suffix('.mp3'), format="mp3")
+    mv_to_trush(filename)
 
 
 def extract_mp3_from_video(filesname):
@@ -730,19 +782,31 @@ def extract_mp3_from_video(filesname):
 # 解压缩
 
 def file_unzip(filename, passwd):
-    notzip = ['.lrc', '.ass', '.ini', '.url', '.apk', '.heic','.chinese_title','.srt']
+    notzip = ['.lrc', '.ass', '.ini', '.url', '.apk', '.heic','.chinese_title','.srt','.vtt','mp3','.mp4','.ts','.mkv','.webm','.wav','.flac','.jpg','.png','txt','.DS_Store']
     maybezip = ['.rar', '.zip', '.7z','.exe']
     if filename.exists() and filename.is_file():
+        unzip = read_config('config.txt','解压目录:')
+        unzip_dir=Path(unzip)
+        if not unzip or not unzip_dir.is_dir():
+            unzip_dir=filename.parent
+        # 分卷压缩
         if len(filename.suffixes) >= 2 and (mimetypes.guess_type(filename) == (
                 None, None) or filename.suffix == '.exe') and filename.suffix not in notzip:
             result = 2
             # 尝试解压
-            for pd in passwd:
+            if len(filename.suffixes)>1:
+                passwd.extend(filename.name.split('.')[0].split())
+
+            if unzip_dir.__str__() in filename.__str__():
                 output = filename.with_suffix("")
+            else:
+                output = unzip_dir / filename.with_suffix("").name
+
+            for pd in passwd:
                 if output.exists():
                     shutil.rmtree(output, ignore_errors=True)
                 cmd = f'bz.exe x -o:"{output}" -aoa -y -p:"{pd}" "{filename}"'
-                result = result and os.system(cmd)
+                result = result and cmd_call(cmd)
                 if not result:
                     break
                 else:
@@ -750,6 +814,7 @@ def file_unzip(filename, passwd):
                         shutil.rmtree(output,ignore_errors=True)
             # 解压成功则
             if not result:
+                show(f'--{filename.name}解压至{output}')
                 for file in filename.parent.glob("*"):
                     if file.is_file and file.name.split('.')[0:-2] == filename.name.split('.')[0:-2] and len(
                             file.suffixes) >= 2:
@@ -758,25 +823,30 @@ def file_unzip(filename, passwd):
                 if filename.exists():
                     for file in filename.rglob('*'):
                         file_unzip(file, passwd)
-
+        # 单独压缩文件
         elif filename.suffix in maybezip or (
                 mimetypes.guess_type(filename) == (None, None) and filename.suffix not in notzip):
             result = 2
-            for pd in passwd:
+            if unzip_dir.__str__() in filename.__str__():
                 output = filename.with_suffix('') if filename.suffix != '' else filename.with_suffix(".voiceWorkTemp")
+            else:
+                output_file=filename.with_suffix('') if filename.suffix != '' else filename.with_suffix(".voiceWorkTemp")
+                output = unzip_dir / output_file.name
+            for pd in passwd:
                 if output.exists():
                     shutil.rmtree(output, ignore_errors=True)
                 output.mkdir()
                 cmd = f'bz.exe x -o:"{output}" -aoa -y -p:"{pd}" "{filename}"'
-                result = result and os.system(cmd)
+                result = result and cmd_call(cmd)
                 if not result:
                     break
                 else:
                     if output.exists():
                         shutil.rmtree(output, ignore_errors=True)
             if not result:
+                show(f'--{filename.name}解压至{output}')
                 mv_to_trush(filename)
-                filename = filename.with_suffix('')
+                filename = output.with_suffix('')
                 output.replace(filename)
                 if filename.exists():
                     for file in filename.rglob('*'):
@@ -788,6 +858,19 @@ def file_unzip(filename, passwd):
         return filename
 
 
+def read_config(config,item,default=None):
+    try:
+        with open(config, encoding='utf-8') as f:
+            cfg = f.readlines()
+            for i, line in enumerate(cfg):
+                if line.strip() == item:
+                    if item!='保存的密码:':
+                        return Path(cfg[i + 1].strip())
+                    else:
+                        return [i.strip() for i in cfg[i + 1:]]
+    except:
+        return None
+
 
 def mv_to_trush(filename):
     try:
@@ -796,7 +879,7 @@ def mv_to_trush(filename):
                                      shellcon.FOF_SILENT | shellcon.FOF_ALLOWUNDO | shellcon.FOF_NOCONFIRMATION, None,
                                      None))  # 删除文件到回收站
         if (not res[1]) and Path(filename).exists():
-            os.system('del ' + filename)
+            cmd_call('del ' + filename)
     except:
         pass
 
@@ -816,8 +899,9 @@ def change_lrc(filename):
     if filename.is_file():
         transform_lrc(filename, ops=ops, file_type=file_type)
     elif filename.is_dir():
-        for file in Path(filename).rglob("*.lrc"):
-            transform_lrc(file, ops=ops, file_type=file_type)
+        for file in Path(filename).rglob("*"):
+            if file.suffix in ['.lrc','.srt','.vtt']:
+                transform_lrc(file, ops=ops, file_type=file_type)
 
 
 def info_register():
@@ -843,24 +927,20 @@ window = tk.Tk()
 if __name__ == '__main__':
     # 窗口信息
     window.title('音声文件夹整理')
-    window.geometry('400x700')
+    window.geometry('400x600')
     window.update()
 
     # 提示信息
-    lable = tk.Label(window, text='将名字带有RJ号的文件夹拖入窗口,可一次拖入多个待处理的文件夹.', font=('宋体', 12), wraplength=window.winfo_width())
-    lable.pack()
-    lable = tk.Label(window, text='该操作会删除所有空文件夹,当A文件夹只包含一个子文件夹B时，会将B中的所有文件放到A内，并删除B。'
-                                  '如果文件名没有RJ号，会找到并处理文件夹中第一个包含的RJ号的子文件夹，并删除其他所有文件，请谨慎使用。', font=('宋体', 12), fg='red',
-                     wraplength=window.winfo_width())
+    lable = tk.Label(window, text='将文件或文件夹拖入窗口,自动执行所选定操作.', font=('宋体', 12), wraplength=window.winfo_width())
     lable.pack()
     # 工作模式
     global work_mode
     work_mode = tk.IntVar(value=0)
-    unzip_checked = tk.Radiobutton(text='只解压', variable=work_mode, command=spider_switch, value=1)
+    unzip_checked = tk.Radiobutton(text='递归解压', variable=work_mode, command=spider_switch, value=1)
     unzip_checked.pack()
-    onlyRJ_checked = tk.Radiobutton(text='使用RJ号作为文件夹名,不爬信息', variable=work_mode, command=spider_switch, value=2)
+    onlyRJ_checked = tk.Radiobutton(text='本地模式', variable=work_mode, command=spider_switch, value=2)
     onlyRJ_checked.pack()
-    spider_checked = tk.Radiobutton(text='爬取dlsite信息', variable=work_mode, command=spider_switch, value=0)
+    spider_checked = tk.Radiobutton(text='在线模式', variable=work_mode, command=spider_switch, value=0)
     spider_checked.pack()
 
     # 变量
@@ -868,7 +948,7 @@ if __name__ == '__main__':
     others_group = []
 
     global wav_to_mp3_checked
-    wav_to_mp3_checked = checkbox_register('wav转换为mp3', group=others_group)
+    wav_to_mp3_checked = checkbox_register('wav,flac转换为mp3',0, group=others_group)
     global ops_checked
     ops_checked = checkbox_register('lrc空行间隔', group=others_group)
     global type_checked
@@ -890,11 +970,13 @@ if __name__ == '__main__':
     global mp3_checked
     mp3_checked = checkbox_register('修改MP3信息', group=spider_group)
     global translate_checked
-    translate_checked = checkbox_register('翻译标题', group=spider_group)
+    translate_checked = checkbox_register('机翻标题', group=spider_group)
     global info_text
     info_text = info_register()
     # 主逻辑
     global pool
-    pool = ThreadPoolExecutor(max_workers=6)
+    pool = ThreadPoolExecutor(max_workers=10)
+    global trans_pool
+    trans_pool = ThreadPoolExecutor(max_workers=10)
     windnd.hook_dropfiles(window, func=dragged_files, force_unicode='utf-8')
     tk.mainloop()
