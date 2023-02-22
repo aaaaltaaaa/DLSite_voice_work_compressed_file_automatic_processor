@@ -1,13 +1,13 @@
 百度翻译app_id:
-
+20211203001017655
 百度翻译app_secret:
-
+AlJ192WYbvNoikNGPmCp
 解压目录:
 
 RJ归档文件夹:
-
+E:\音声\TG
 RJ汉化归档文件夹:
-
+E:\音声\TG
 保存的密码:
 橙澄子汉化组
 风花雪月汉化组
@@ -18,40 +18,26 @@ KvoRic
 destiny
 转载须同意，贩卖死全家
 komo
-<<<<<<< HEAD
-heishui
-=======
->>>>>>> origin/master
 laojiang
 LAOJIANG
 bjgzm.org
 south-plus
-<<<<<<< HEAD
 south
-=======
->>>>>>> origin/master
 southplus
 2887
 south-snw+
 soulplus
-<<<<<<< HEAD
 AIJ1234
 Misaki3
 Mucho
-=======
->>>>>>> origin/master
 旧日支配者
 yuri
 peichisan
 铃音神社汉化组
 lovejoi
 soul
-<<<<<<< HEAD
 苍穹字幕组
 上村花论坛看小姐姐
 arssjt
 nano
 pikon
-=======
-上村花论坛看小姐姐
->>>>>>> origin/master

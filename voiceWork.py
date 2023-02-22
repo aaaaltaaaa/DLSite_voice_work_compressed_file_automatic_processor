@@ -411,6 +411,19 @@ def change_name(filename, tags, id):
                 title = trans['trans_result'][0]['dst']
     except:
         pass
+    # 机翻LRC
+    try:
+        if translate_checked.get():
+            for file in filename.rglob("*"):
+                if not file.is_file() or file.suffix not in ['.lrc'] or 'original_lrc' in file.parent.__str__():
+                    continue
+                trans = translate(file.stem)
+                if 'from' in trans and trans['from'] != 'zh':
+                    name = trans['trans_result'][0]['dst']
+                    file.replace(file.with_stem(name))
+    except:
+        pass
+
     # 构建文件名
     newname=id
     lcr = 0
@@ -579,25 +592,9 @@ def set_Info(path, info):
 # 爬取信息与图片
 def spider(filename, id):
     show('--开始爬取信息')
-    url = 'https://www.dlsite.com/maniax/work/=/product_id/' + id + '.html'
-    headers = {
-        "authority": "www.dlsite.com",
-        "method": "GET",
-        "path": f"/maniax/work/=/product_id/{id}.html",
-        "scheme": "https",
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-        "accept-encoding": "gzip, deflate, br",
-        "accept-language": "zh-CN,zh;q=0.9,zh-TW;q=0.8",
-        "cache-control": "max-age=0",
-        "cookie": "uniqid=0.d8q0kidmkq6; dlsite_dozen=7; _ts_yjad=1637081116030; _gaid=1276157997.1637081115; adultchecked=1; __lt__cid=29701fed-f43e-42bf-a284-9ce3d4d378b1; wovn_selected_lang=zh-CHS; carted=1; locale=zh-cn; localesuggested=true; adr_id=Ub2DpFVcRxLOTwlgsJ1aGEchUBznAqLnj8zWGwt6giSQaWyc; _inflow_ad_params=%7B%22ad_name%22%3A%22organic%22%7D; WAPID=KgGRdRXUDlj2xA38ukpc7WWnjlgvqK8Joa4; wap_last_event=showWidgetPage; _im_vid=01GPXE3DKF8HPGZ5A8SYS27DXZ; __DLsite_SID=t9uqp84uq2j4o7a7p6o07j8tft; _gcl_au=1.1.213668751.1676022501; wovn_mtm_showed_langs=%5B%22zh-CHS%22%5D; _gid=GA1.2.1344715748.1676465956; _inflow_params=%7B%22referrer_uri%22%3A%22www.google.com%22%7D; _ga_YG879NVEC7=GS1.1.1676473130.2.0.1676473138.0.0.0; DL_PRODUCT_LOG=%2CRJ300435%2CRJ290120%2CRJ406462%2CRJ374401%2CRJ411265%2CRJ340514%2CRJ419386%2CRJ235149%2CRJ329961%2CRJ252619%2CRJ297628%2CRJ374986; _inflow_dlsite_params=%7B%22dlsite_referrer_url%22%3A%22https%3A%2F%2Fwww.dlsite.com%2Fmaniax%2Fwork%2F%3D%2Fproduct_id%2FRJ300435.html%22%7D; _ga_ZW5GTXK6EV=GS1.1.1676514918.79.1.1676514962.0.0.0; _ga=GA1.2.1276157997.1637081115; OptanonConsent=isGpcEnabled=0&datestamp=Thu+Feb+16+2023+10%3A36%3A07+GMT%2B0800+(%E4%B8%AD%E5%9B%BD%E6%A0%87%E5%87%86%E6%97%B6%E9%97%B4)&version=6.23.0&isIABGlobal=false&hosts=&landingPath=NotLandingPage&groups=C0004%3A1%2CC0003%3A1%2CC0002%3A1%2CC0001%3A1&AwaitingReconsent=false&geolocation=AU%3BNSW",
-        "sec-fetch-dest": "document",
-        "sec-fetch-mode": "navigate",
-        "sec-fetch-site": "none",
-        "sec-fetch-user": "?1",
-        "upgrade-insecure-requests": "1",
-        "user-agent": "Mozilla/5.0 (iPad; CPU OS 13_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/87.0.4280.77 Mobile/15E148 Safari/604.1"
-    }
-    req = urllib.request.Request(url=url, method="POST",headers=headers)
+    url = 'https://www.dlsite.com/maniax/work/=/product_id/' + id + '.html/?locale=zh_CN'
+
+    # req = urllib.request.Request(url=url, method="POST")
 
     try:
         response = urllib.request.urlopen(url)
