@@ -84,7 +84,6 @@ def process(filename):
                 find_no_mp3(filename)
                 icon(id, filename)
             mv_lrc(filename)
-
             show(f"处理完成，文件位于{filename}")
     except Exception as e:
         show(f"{e}")
@@ -409,11 +408,6 @@ def change_name(filename, tags, id):
             trans = translate(title)
             if 'from' in trans and trans['from'] != 'zh':
                 title = trans['trans_result'][0]['dst']
-    except:
-        pass
-    # 机翻LRC
-    try:
-        if translate_checked.get():
             for file in filename.rglob("*"):
                 if not file.is_file() or file.suffix not in ['.lrc'] or 'original_lrc' in file.parent.__str__():
                     continue
@@ -843,6 +837,13 @@ def file_unzip(filename, passwd):
             if not result:
                 show(f'--{filename.name}解压至{output}')
                 mv_to_trush(filename)
+                # 删除zip分卷压缩
+
+                if filename.suffix=='.zip':
+                    for file in filename.parent.glob("*"):
+                        if file.is_file and file.stem==filename.stem and file.suffix[0:2]=='.z':
+                            mv_to_trush(file)
+
                 filename = output.with_suffix('')
                 output.replace(filename)
                 if filename.exists():
@@ -967,12 +968,12 @@ if __name__ == '__main__':
     global mp3_checked
     mp3_checked = checkbox_register('修改MP3信息', group=spider_group)
     global translate_checked
-    translate_checked = checkbox_register('机翻标题', group=spider_group)
+    translate_checked = checkbox_register('机翻标题和lrc', group=spider_group)
     global info_text
     info_text = info_register()
     # 主逻辑
     global pool
-    pool = ThreadPoolExecutor(max_workers=10)
+    pool = ThreadPoolExecutor(max_workers=1)
     global trans_pool
     trans_pool = ThreadPoolExecutor(max_workers=10)
     windnd.hook_dropfiles(window, func=dragged_files, force_unicode='utf-8')
