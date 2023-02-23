@@ -1,7 +1,7 @@
 百度翻译app_id:
-
+20211203001017655
 百度翻译app_secret:
-
+AlJ192WYbvNoikNGPmCp
 解压目录:
 
 RJ归档文件夹:
@@ -18,7 +18,6 @@ KvoRic
 destiny
 转载须同意，贩卖死全家
 komo
-heishui
 laojiang
 LAOJIANG
 bjgzm.org
