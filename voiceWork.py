@@ -325,8 +325,12 @@ def unzip(filename):
         passwd = filename.stem.split()
         passwd.extend(filename.name.split('.')[0].split())
         passwd.extend(read_config('config.txt','保存的密码:'))
-        for file in [filename]+sorted(filename.rglob('*')):
-            file_unzip(file, passwd)
+        if filename.is_file():
+            filename = file_unzip(filename, passwd)
+        else:
+            for file in filename.rglob('*'):
+                file_unzip(file, passwd)
+
     except:
         show(f'{filename}解压失败')
     return filename
@@ -496,13 +500,17 @@ def archieve(filename):
         for _ in Path(filename).rglob('*.lrc'):
             lrc = 1
             break
-        original_RJ_path = Path(read_config('config.txt','RJ归档文件夹:'))
-        chinese_RJ_path = Path(read_config('config.txt', 'RJ汉化归档文件夹:'))
+        original_RJ_path = read_config('config.txt','RJ归档文件夹:')
+        chinese_RJ_path = read_config('config.txt', 'RJ汉化归档文件夹:')
 
-        if not original_RJ_path or not original_RJ_path.is_dir():
+        if not original_RJ_path or not Path(original_RJ_path).is_dir():
             original_RJ_path = Path(filename.parent)
-        if not chinese_RJ_path or not chinese_RJ_path.is_dir():
+        else:
+            original_RJ_path = Path(original_RJ_path)
+        if not chinese_RJ_path or not Path(chinese_RJ_path).is_dir():
             chinese_RJ_path = Path(filename.parent)
+        else:
+            chinese_RJ_path = Path(chinese_RJ_path)
 
         others_RJ_path = []
         RJ_path = [original_RJ_path, chinese_RJ_path] + others_RJ_path
@@ -815,9 +823,10 @@ def file_unzip(filename, passwd):
     if filename.exists() and filename.is_file():
         # 获取解压目录
         unzip = read_config('config.txt','解压目录:')
-        unzip_dir=Path(unzip)
-        if not unzip or not unzip_dir.is_dir():
+        if not unzip or not Path(unzip).is_dir():
             unzip_dir=filename.parent
+        else:
+            unzip_dir=Path(unzip)
         # 尝试解压
         if ((len(filename.suffixes) >1 and (mimetypes.guess_type(filename) == (None, None) or filename.suffix == '.exe')) or (filename.suffix in maybezip or mimetypes.guess_type(filename) == (None, None))) and filename.suffix not in notzip and filename.name not in ['.DS_Store']:
 
@@ -877,7 +886,7 @@ def read_config(config,item):
             for i, line in enumerate(cfg):
                 if line.strip() == item:
                     if item!='保存的密码:':
-                        return Path(cfg[i + 1].strip())
+                        return cfg[i + 1].strip()
                     else:
                         return [i.strip() for i in cfg[i + 1:]]
     except:
@@ -987,7 +996,7 @@ if __name__ == '__main__':
     info_text = info_register()
     # 主逻辑
     global pool
-    pool = ThreadPoolExecutor(max_workers=1)
+    pool = ThreadPoolExecutor(max_workers=10)
     global trans_pool
     trans_pool = ThreadPoolExecutor(max_workers=1)
     windnd.hook_dropfiles(window, func=dragged_files, force_unicode='utf-8')
