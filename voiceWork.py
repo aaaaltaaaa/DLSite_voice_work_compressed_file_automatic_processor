@@ -10,6 +10,7 @@ import re
 import shutil
 import srt
 import stat
+import threading
 import tkinter as tk
 import traceback
 import urllib.request
@@ -18,10 +19,12 @@ from PIL import Image as img
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, wait
 from copy import deepcopy
+from functools import wraps
 from mutagen.id3 import ID3FileType, APIC, TIT2, TPE1, TALB, TPE2, TRCK
 from pathlib import Path
 from pydub import AudioSegment
 from subprocess import run
+from time import sleep
 from typing import Optional
 from vtt_to_srt.vtt_to_srt import ConvertFile
 from win32com.shell import shell, shellcon
@@ -320,12 +323,10 @@ def get_icon(id, newname):
 def unzip(filename):
     try:
         passwd = filename.stem.split()
+        passwd.extend(filename.name.split('.')[0].split())
         passwd.extend(read_config('config.txt','保存的密码:'))
-        if filename.is_file():
-            filename = file_unzip(filename, passwd)
-        elif filename.is_dir():
-            for file in filename.rglob('*'):
-                file_unzip(file, passwd)
+        for file in [filename]+sorted(filename.rglob('*')):
+            file_unzip(file, passwd)
     except:
         show(f'{filename}解压失败')
     return filename
@@ -383,6 +384,45 @@ def show(info):
     except:
         pass
 
+def show_wait(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        show_text = threading.Thread(target=wait_text, args=())
+        show_text.daemon = True
+        show_text.start()
+        result=f(*args, **kwargs)
+        global wait_flag
+        wait_flag = False
+        show_text.join()
+        return result
+    return decorated
+
+def wait_text():
+    try:
+        global wait_flag
+        wait_flag = True
+        sleep(1)
+        info_text.insert('end', ' ')
+        info_text.update()
+        while wait_flag:
+            for i in range(6):
+                if not wait:
+                    break
+                info_text.insert('end', '*')
+                info_text.update()
+                sleep(1)
+            index = info_text.index('end')
+            index = str(int(index.split('.')[0]) - 1) + '.1'
+            info_text.delete(index, 'end')
+            info_text.update()
+            sleep(1)
+        index = info_text.index('end')
+        index = str(int(index.split('.')[0]) - 1) + '.0'
+        info_text.delete(index, 'end')
+        info_text.insert('end', '\n')
+        info_text.update()
+    except:
+        pass
 
 
 def change_name(filename, tags, id):
@@ -606,11 +646,11 @@ def spider(filename, id):
             show('--网络故障,未找到网页，结束。')
             return None
     bs = BeautifulSoup(response.read().decode('utf-8'), 'html.parser')
-    cv = ''
-    name = bs.select('#work_name')[0].text.strip()
-    name = re.sub(r"【.*?】", "", name)
-    name=name.strip()
 
+    name = bs.select('#work_name')[0].text.strip()
+    name = re.sub(r"【.*?】", "", name).strip()
+
+    cv = ''
     for i in bs.select('#work_outline>tr'):
         if i.th.text == '声優' or i.th.text == '声优':
             cv = i.td.text.replace('/', ' ')
@@ -618,6 +658,7 @@ def spider(filename, id):
     group = bs.select('.maker_name>a')[0].text.strip()
     # imgurl = r'https:' + bs.select('.active>img')[0]['src']
     imgurl = r'https:' + bs.select('.active>picture>img')[0]['srcset']
+    assert filename.exists()
     urllib.request.urlretrieve(imgurl, Path(filename) / (id + ".jpg"))
     show("--爬取完成")
     return group, name, cv
@@ -673,8 +714,11 @@ def clear(filename):
         if item not in newname:
             newname.append(item)
     newname= filename.with_stem(' '.join(newname))
-    filename.replace(newname)
+    if filename !=newname:
+        filename.replace(newname)
     return newname
+
+@ show_wait
 def cmd_call(cmd):
     return run(cmd, shell=True).returncode
 
@@ -714,6 +758,18 @@ def trans_wav_or_flac_to_mp3(filesname):
         if filename.suffix == '.flac':
             flac = 1
 
+    thread_list=[]
+    if wav == 1:
+        for filename in Path(filesname).rglob('*.wav'):
+            if filename.suffix == '.wav':
+                thread_list.append(trans_pool.submit(to_mp3,filename))
+    if flac == 1:
+        for filename in Path(filesname).rglob('*.flac'):
+            if filename.suffix == '.flac':
+                thread_list.append(trans_pool.submit(to_mp3,filename))
+    for thread in thread_list:
+        thread.result()
+
     if mp3 == 1:
         if wav == 1:
             for filename in Path(filesname).rglob('*.wav'):
@@ -730,20 +786,9 @@ def trans_wav_or_flac_to_mp3(filesname):
                             mv_to_trush(filename)
                             break
 
-    thread_list=[]
-    if wav == 1:
-        for filename in Path(filesname).rglob('*.wav'):
-            if filename.suffix == '.wav':
-                thread_list.append(trans_pool.submit(to_mp3,filename))
-    if flac == 1:
-        for filename in Path(filesname).rglob('*.flac'):
-            if filename.suffix == '.flac':
-                thread_list.append(trans_pool.submit(to_mp3,filename))
-    for thread in thread_list:
-        thread.result()
     show('--mp3转换完成')
 
-
+@show_wait
 def to_mp3(filename):
     show(f'--转换{filename.stem}')
     song = AudioSegment.from_file(filename)
@@ -751,53 +796,47 @@ def to_mp3(filename):
     mv_to_trush(filename)
 
 
+
 def extract_mp3_from_video(filesname):
     try:
         if not extract_checked.get():
             return
         video= ['.mp4', '.ts','.mkv','.webm']
-        if filesname.is_file() and filesname.suffix in video:
-            show(f'--开始提取{filesname}')
-            audio = AudioSegment.from_file(filesname)
-            audio.export(filesname.with_suffix('.mp3'), format="mp3")
-            mv_to_trush(filesname)
-        else:
-            for filename in Path(filesname).rglob('*'):
-                if filename.is_file() and filename.suffix in video:
-                    show(f'--开始提取{filename}')
-                    audio = AudioSegment.from_file(filename)
-                    audio.export(filename.with_suffix('.mp3'), format="mp3")
-                    mv_to_trush(filename)
+        for filename in [filesname]+(Path(filesname).rglob('*')):
+            if filename.is_file() and filename.suffix in video:
+                to_mp3(filename)
     except:
         show('--提取MP3失败')
 # 解压缩
 
 def file_unzip(filename, passwd):
-    notzip = ['.lrc', '.ass', '.ini', '.url', '.apk', '.heic','.chinese_title','.srt','.vtt','mp3','.mp4','.ts','.mkv','.webm','.wav','.flac','.jpg','.png','txt','.DS_Store']
+    notzip = ['.lrc', '.ass', '.ini', '.url', '.apk', '.heic','.chinese_title','.srt','.vtt','mp3','.mp4','.ts','.mkv','.webm','.wav','.flac','.jpg','.png','txt']
     maybezip = ['.rar', '.zip', '.7z','.exe']
     if filename.exists() and filename.is_file():
+        # 获取解压目录
         unzip = read_config('config.txt','解压目录:')
         unzip_dir=Path(unzip)
         if not unzip or not unzip_dir.is_dir():
             unzip_dir=filename.parent
-        # 分卷压缩
-        if len(filename.suffixes) >= 2 and (mimetypes.guess_type(filename) == (
-                None, None) or filename.suffix == '.exe') and filename.suffix not in notzip:
+        # 尝试解压
+        if ((len(filename.suffixes) >1 and (mimetypes.guess_type(filename) == (None, None) or filename.suffix == '.exe')) or (filename.suffix in maybezip or mimetypes.guess_type(filename) == (None, None))) and filename.suffix not in notzip and filename.name not in ['.DS_Store']:
+
             result = 2
-            # 尝试解压
-            if len(filename.suffixes)>1:
-                passwd.extend(filename.name.split('.')[0].split())
-
+            # 解压目标文件夹名
+            output_file = filename.with_name(filename.name.split('.')[0]) if filename.suffix != '' else filename.with_suffix(
+                ".voiceWorkTemp")
             if unzip_dir.__str__() in filename.__str__():
-                output = filename.with_suffix("")
+                output = output_file
             else:
-                output = unzip_dir / filename.with_suffix("").name
-
+                output = unzip_dir / output_file.name
+            # 尝试解压
             for pd in passwd:
                 if output.exists():
                     shutil.rmtree(output, ignore_errors=True)
                 cmd = f'bz.exe x -o:"{output}" -aoa -y -p:"{pd}" "{filename}"'
                 result = result and cmd_call(cmd)
+                global wait_flag
+                wait_flag = False
                 if not result:
                     break
                 else:
@@ -806,46 +845,21 @@ def file_unzip(filename, passwd):
             # 解压成功则
             if not result:
                 show(f'--{filename.name}解压至{output}')
+                # 删除分卷压缩
                 for file in filename.parent.glob("*"):
-                    if file.is_file and file.name.split('.')[0:-2] == filename.name.split('.')[0:-2] and len(
-                            file.suffixes) >= 2:
-                        mv_to_trush(file)
-                filename = output
-                if filename.exists():
-                    for file in filename.rglob('*'):
-                        file_unzip(file, passwd)
-        # 单独压缩文件
-        elif filename.suffix in maybezip or (
-                mimetypes.guess_type(filename) == (None, None) and filename.suffix not in notzip):
-            result = 2
-            if unzip_dir.__str__() in filename.__str__():
-                output = filename.with_suffix('') if filename.suffix != '' else filename.with_suffix(".voiceWorkTemp")
-            else:
-                output_file=filename.with_suffix('') if filename.suffix != '' else filename.with_suffix(".voiceWorkTemp")
-                output = unzip_dir / output_file.name
-            for pd in passwd:
-                if output.exists():
-                    shutil.rmtree(output, ignore_errors=True)
-                output.mkdir()
-                cmd = f'bz.exe x -o:"{output}" -aoa -y -p:"{pd}" "{filename}"'
-                result = result and cmd_call(cmd)
-                if not result:
-                    break
-                else:
-                    if output.exists():
-                        shutil.rmtree(output, ignore_errors=True)
-            if not result:
-                show(f'--{filename.name}解压至{output}')
-                mv_to_trush(filename)
-                # 删除zip分卷压缩
-
-                if filename.suffix=='.zip':
-                    for file in filename.parent.glob("*"):
-                        if file.is_file and file.stem==filename.stem and file.suffix[0:2]=='.z':
+                    if len(filename.suffixes) > 1:
+                        if file.is_file and file.name.split('.')[0:-2] == filename.name.split('.')[0:-2] and len(
+                                file.suffixes) >= 2:
                             mv_to_trush(file)
-
-                filename = output.with_suffix('')
-                output.replace(filename)
+                    else:
+                        mv_to_trush(filename)
+                        # 删除zip分卷压缩
+                        if filename.suffix == '.zip':
+                            for file in filename.parent.glob("*"):
+                                if file.is_file and file.stem == filename.stem and file.suffix[0:2] == '.z':
+                                    mv_to_trush(file)
+                # 递归解压
+                filename = output
                 if filename.exists():
                     for file in filename.rglob('*'):
                         file_unzip(file, passwd)
@@ -856,7 +870,7 @@ def file_unzip(filename, passwd):
         return filename
 
 
-def read_config(config,item,default=None):
+def read_config(config,item):
     try:
         with open(config, encoding='utf-8') as f:
             cfg = f.readlines()
@@ -946,7 +960,7 @@ if __name__ == '__main__':
     others_group = []
 
     global wav_to_mp3_checked
-    wav_to_mp3_checked = checkbox_register('wav,flac转换为mp3',0, group=others_group)
+    wav_to_mp3_checked = checkbox_register('wav,flac转换为mp3', group=others_group)
     global ops_checked
     ops_checked = checkbox_register('lrc空行间隔', group=others_group)
     global type_checked
@@ -975,6 +989,6 @@ if __name__ == '__main__':
     global pool
     pool = ThreadPoolExecutor(max_workers=1)
     global trans_pool
-    trans_pool = ThreadPoolExecutor(max_workers=10)
+    trans_pool = ThreadPoolExecutor(max_workers=1)
     windnd.hook_dropfiles(window, func=dragged_files, force_unicode='utf-8')
     tk.mainloop()
