@@ -1,7 +1,7 @@
 百度翻译app_id:
-20211203001017655
+
 百度翻译app_secret:
-AlJ192WYbvNoikNGPmCp
+
 解压目录:
 
 RJ归档文件夹:
