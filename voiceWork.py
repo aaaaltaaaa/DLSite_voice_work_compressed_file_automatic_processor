@@ -1072,7 +1072,7 @@ if __name__ == '__main__':
     info_text = info_register()
     # 主逻辑
     global pool
-    pool = ThreadPoolExecutor(max_workers=1)
+    pool = ThreadPoolExecutor(max_workers=10)
     global trans_pool
     trans_pool = ThreadPoolExecutor(max_workers=1)
     windnd.hook_dropfiles(window, func=dragged_files, force_unicode='utf-8')
