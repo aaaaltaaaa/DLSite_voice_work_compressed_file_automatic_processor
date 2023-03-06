@@ -6,9 +6,9 @@
 # Please refer to `https://api.fanyi.baidu.com/doc/21` for complete api document
 
 import random
-from hashlib import md5
-
 import requests
+import time
+from hashlib import md5
 
 
 def translate(query=''):
@@ -32,7 +32,7 @@ def translate(query=''):
     # Send request
     r = requests.post(url, params=payload, headers=headers)
     result = r.json()
-    # Show response
+    time.sleep(1)    # Show response
     return result
 
 

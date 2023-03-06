@@ -31,16 +31,18 @@ from win32com.shell import shell, shellcon
 
 from translate import translate
 
-
+audio=['.mp3', '.flac','.wav']
+video=['.mp4', '.avi','.ts','mkv','.webm',]
+subtitle=['.lrc', '.ass', '.srt','.vtt',]
+notzip = ['.ini', '.url', '.apk', '.heic','.chinese_title','.jpg','.png','.doc','.docx','.xlsx','.xls','txt','.pdf']+audio+video
+maybezip = ['.rar', '.zip', '.7z','.exe']
 # 拖拽时执行的函数
-
-
 def dragged_files(files):
     for filename in files:
         pool.submit(process, filename)
 
-def find_no_mp3(filename):
-    suffix = ['.mp3', '.mp4', '.avi','.flac','.wav']
+def find_no_audio(filename):
+    suffix = audio+video
     flag = 0
     for file in filename.rglob('*'):
         for suf in suffix:
@@ -64,14 +66,18 @@ def mv_lrc(filename):
         break
     else:
         return
-
-
     changed=[]
     # 恢复原本文件名
     for mp3_file in filename.rglob('*.mp3'):
         if 'TIT2' in ID3FileType(mp3_file):
             mp3_TIT2 = ID3FileType(mp3_file)['TIT2'].__str__()
             mp3_file.replace(mp3_file.with_stem(mp3_TIT2))
+        else:
+            ID3FileType(mp3_file)['TIT2']=TIT2(  # 插入歌名
+            encoding=3,
+            text=mp3_file.stem)
+    if not mv_lrc_checked.get():
+        return
     # 匹配字幕
     for lrc_file in filename.rglob('*'):
         if lrc_file.suffix not in ['.lrc'] or lrc_file in changed or 'original_lrc' in lrc_file.__str__():
@@ -81,12 +87,12 @@ def mv_lrc(filename):
         if len(distance) == 0:
             distance = get_distance(lrc_file,filename,changed)
         if len(distance)==0:
-            show(f"--{filename.name}:{Path(lrc_file).name}没有对应的mp3")
+            # show(f"--{filename.name}:{Path(lrc_file).name}没有对应的mp3")
             continue
         # 寻找最匹配的lrc
         same_no=[]
         for k,v in distance.items():
-            if k.stem==mp3_file.stem:
+            if k.stem==lrc_file.stem:
                 same_no.append(k)
                 break
         else:
@@ -110,6 +116,10 @@ def mv_lrc(filename):
         for k, v in distance.items():
             if v == max_score:
                 mp3_list.append(k)
+
+        # 如果难以分辨
+        if len(mp3_list)>1 and (max_score==0 or max_score==1):
+            return
         for mp3_file in mp3_list:
             if not (mp3_file.with_name(lrc_file.name)).exists() and mp3_file.exists():
                 if len(mp3_list)==1:
@@ -121,6 +131,7 @@ def mv_lrc(filename):
                 mp3_file.replace(mp3_file.with_stem(lrc_file.stem))
                 changed.append(mp3_file.with_stem(lrc_file.stem))
                 changed.append(mp3_file.with_name(lrc_file.name))
+                recode(filename/'重命名.txt',f'{mp3_file.relative_to(filename)}->{mp3_file.with_stem(lrc_file.stem).relative_to(filename)}')
     clear_empty_dir(filename)
 
 
@@ -128,7 +139,7 @@ def get_distance(lrc_file, filename, changed):
     pattern = re.compile('\d+')
     distance = collections.OrderedDict()
     for mp3_file in filename.rglob('*.mp3'):
-        if 'original_lrc' in lrc_file.__str__() or lrc_file in changed:
+        if 'original_lrc' in lrc_file.__str__() or mp3_file in changed:
             continue
         ptn_lrc = []
         for i in pattern.findall(lrc_file.stem):
@@ -140,22 +151,24 @@ def get_distance(lrc_file, filename, changed):
         for i in pattern.findall(mp3_file.stem):
             ptn_mp3.append(''.join([str(int(j)) for j in list(i)]))
         ptn_mp3 = ' '.join(ptn_mp3)
-        try:
+        if ptn_mp3=='' or ptn_lrc=='':
+            distance[mp3_file] = Levenshtein.jaro(lrc_file.stem, mp3_file.stem)
+        else:
             distance[mp3_file] = Levenshtein.jaro(ptn_mp3,
                                       ptn_lrc)
-        except:
-            distance[mp3_file] = Levenshtein.jaro(lrc_file.stem, lrc_file.stem)
+
     return distance
 
 def transform_lrc(input: Path, output: Optional[Path] = None, ops: str = 'add', file_type: str = 'lrc',
                   deleted: bool = False) -> None:
-    if 'original_lrc' in input.parts or input.suffix not in ['.vtt', '.srt', '.ass','.lrc']:
+    if 'original_lrc' in input.parts or input.suffix not in subtitle:
         return
     # show(f"--处理lrc:{input}")
     # vtt转srt,lrc
     try:
         if input.suffix!='.lrc':
             result=cmd_call(f'ffmpeg -i {input} {input.with_suffix(".lrc")}')
+            # 如果ffmpeg失败,调用库自己处理
             if result:
                 if input.suffix == '.vtt':
                     if not input.with_stem(input.name.split('.')[0]).with_suffix('.srt').exists():
@@ -206,7 +219,6 @@ def transform_lrc(input: Path, output: Optional[Path] = None, ops: str = 'add', 
             lrc += '\n'
         lrc_string = lrc
         subs_input = pylrc.parse(lrc_string)
-        first_line = 0
 
         if ops == 'add':
             add_empty = True
@@ -315,9 +327,9 @@ def RJ_No(filename):
         return None
 
     RJ = {}
-    id = re.search("RJ\d{8}", filename.name.__str__())
+    id = re.search("RJ\d{8}", filename.name.__str__().upper())
     if not id:
-        id = re.search("RJ\d{6}", filename.name.__str__())
+        id = re.search("RJ\d{6}", filename.name.__str__().upper())
     if id:
         id = (filename.name.__str__())[id.regs[0][0]:id.regs[0][1]]
         show(f'--找到{id}')
@@ -402,7 +414,6 @@ def wait_text():
     except:
         pass
 
-
 def change_name(filename, tags, id):
     group, title, cv = tags
     # 查找翻译好的中文标题
@@ -426,13 +437,6 @@ def change_name(filename, tags, id):
             trans = translate(title)
             if 'from' in trans and trans['from'] == 'jp':
                 title = trans['trans_result'][0]['dst']
-            for file in filename.rglob("*"):
-                if not file.is_file() or file.suffix not in ['.lrc'] or 'original_lrc' in file.parent.__str__():
-                    continue
-                trans = translate(file.stem)
-                if 'from' in trans and trans['from'] == 'jp':
-                    name = trans['trans_result'][0]['dst']
-                    file.replace(file.with_stem(name))
     except:
         pass
 
@@ -671,10 +675,18 @@ def clear(filename):
                     file = Path(root + ' ' + dirs[0])
                 else:
                     file= Path(root).parent/dirs[0]
+
+                newname = []
+                for item in file.stem.split(' '):
+                    if item not in newname:
+                        newname.append(item)
+                file = file.with_stem(' '.join(newname))
+
                 if root == filename.__str__():
                     filename = Path(file)
                 rename(Path(root) / dirs[0],file)
-                shutil.rmtree(root)
+                if Path(root)!=filename:
+                    shutil.rmtree(root)
                 flag = True
                 break
             if len(dirs) == 0 and len(files) == 1:
@@ -682,23 +694,24 @@ def clear(filename):
                     file = Path(root + ' ' + files[0])
                 else:
                     file = Path(root).parent / files[0]
+
+                newname = []
+                for item in file.stem.split(' '):
+                    if item not in newname:
+                        newname.append(item)
+                file = file.with_stem(' '.join(newname))
+
                 if root == filename.__str__():
                     filename = Path(file)
                 rename(Path(root) / files[0],file)
-                shutil.rmtree(root)
+                if Path(root)!=filename:
+                    shutil.rmtree(root)
                 flag = True
                 break
             if len(dirs) == 0 and len(files) == 0:
                 shutil.rmtree(root)
                 flag = True
-    newname = []
-    for item in filename.stem.split(' '):
-        if item not in newname:
-            newname.append(item)
-    newname= filename.with_stem(' '.join(newname))
-    if filename !=newname:
-        filename.replace(newname)
-    return newname
+    return filename
 
 def rename(src,dst):
     if dst.exists():
@@ -708,7 +721,7 @@ def rename(src,dst):
             dst.replace(dst.with_stem(dst.with_stem+'_2'))
             src.replace(dst)
     else:
-        src.replace(dst)
+        src.rename(dst)
 
 @ show_wait
 def cmd_call(cmd):
@@ -787,8 +800,6 @@ def to_mp3(filename):
     song.export(filename.with_suffix('.mp3'), format="mp3")
     mv_to_trush(filename)
 
-
-
 def extract_mp3_from_video(filesname):
     try:
         if not extract_checked.get():
@@ -801,8 +812,6 @@ def extract_mp3_from_video(filesname):
         show('--提取MP3失败')
 # 解压缩
 def file_unzip(filename, passwd):
-    notzip = ['.lrc', '.ass', '.ini', '.url', '.apk', '.heic','.chinese_title','.srt','.vtt','mp3','.mp4','.ts','.mkv','.webm','.wav','.flac','.jpg','.png','.doc','.docx','.xlsx','.xls','txt','.avi','.pdf']
-    maybezip = ['.rar', '.zip', '.7z','.exe']
     if filename.exists() and filename.is_file():
         # 获取解压目录
         unzip = read_config('config.txt','解压目录:')
@@ -900,11 +909,39 @@ def checkbox_register(text='NULL', value=1,command=None,group=None):
 def change_lrc(filename):
     ops = 'add' if 1 else 'delete'
     file_type = 'srt' if 0 else 'lrc'
-    if filename.is_file():
-        transform_lrc(filename, ops=ops, file_type=file_type)
-    elif filename.is_dir():
-        for file in Path(filename).rglob("*"):
+    lrc_list=[]
+
+    translate_lrc_filename(filename)
+
+    for file in filename.rglob('*.lrc'):
+        lrc_list.append(file.name)
+    for file in [filename]+sorted(Path(filename).rglob("*")):
+        # 转换不存在对应lrc的文件
+        if file.is_file() and file.with_suffix('.lrc').name not in lrc_list:
             transform_lrc(file, ops=ops, file_type=file_type)
+
+
+# 机翻字幕文件名
+def translate_lrc_filename(filename):
+    for file in filename.rglob("*"):
+        if not file.is_file() or file.suffix not in ['.lrc'] or 'original_lrc' in file.parent.__str__():
+            continue
+        compile = re.compile(f'\d+')
+        name = compile.split(file.stem)[-1]
+        for item in ['Track', 'track', 'トラック']:
+            name = name.replace(item, '')
+        name = name.strip()
+        trans = translate(name)
+        if 'from' in trans and trans['from'] == 'jp':
+            trans_name = trans['trans_result'][0]['dst']
+            file.replace(file.with_stem(file.stem.replace(name, trans_name)))
+            recode(filename / "重命名.txt",
+                   f'{file.relative_to(filename)}->{file.with_stem(file.stem.replace(name, trans_name)).relative_to(filename)}')
+
+
+def recode(file,text):
+    with open(file,'a',encoding='utf-8') as f:
+        f.write(text+'\n')
 
 
 def info_register():
@@ -924,9 +961,6 @@ def spider_switch():
     others = 1 if work_mode.get() != 1 else 0
     for button, value in others_group:
         button.config(state='normal' if others else 'disabled')
-
-window = tk.Tk()
-
 
 # 处理函数
 def process(filename):
@@ -956,6 +990,7 @@ def process(filename):
             show(f"开始处理{id}")
 
             if filename.is_file():
+                # 如果是单独的音频文件
                 if filename.suffix in ['.lrc','.mp3','.srt','.mp4','.txt','.wav']:
                     if not filename.with_name(id).exists():
                         filename.with_name(id).mkdir()
@@ -974,14 +1009,15 @@ def process(filename):
                     continue
                 change_tags(filename, tags, filename / (id + '.jpg'))
                 filename = change_name(filename, tags, id)
-                find_no_mp3(filename)
+                find_no_audio(filename)
                 icon(id, filename)
-            mv_lrc(filename)
             show(f"处理完成，文件位于{filename}")
     except Exception as e:
         show(f"{e}")
         logging.error(e)
         logging.error("\n" + traceback.format_exc())
+
+window = tk.Tk()
 
 if __name__ == '__main__':
     # 窗口信息
@@ -1007,11 +1043,13 @@ if __name__ == '__main__':
     others_group = []
 
     global wav_to_mp3_checked
-    wav_to_mp3_checked = checkbox_register('wav,flac转换为mp3', group=others_group)
+    wav_to_mp3_checked = checkbox_register('wav,flac转换为mp3',0, group=others_group)
     global ops_checked
     ops_checked = checkbox_register('lrc空行间隔', group=others_group)
     global type_checked
     type_checked = checkbox_register('lrc转换为srt', 0, group=others_group)
+    global mv_lrc_checked
+    mv_lrc_checked = checkbox_register('自动匹配lrc和mp3', group=others_group)
     global extract_checked
     extract_checked = checkbox_register('video提取MP3', 0, group=others_group)
     global archive_checked
@@ -1038,4 +1076,5 @@ if __name__ == '__main__':
     global trans_pool
     trans_pool = ThreadPoolExecutor(max_workers=1)
     windnd.hook_dropfiles(window, func=dragged_files, force_unicode='utf-8')
+    spider_switch()
     tk.mainloop()
